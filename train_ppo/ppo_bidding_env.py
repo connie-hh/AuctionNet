@@ -1,5 +1,6 @@
 import numpy as np
 from typing import Tuple, Optional
+from run.run_test import get_winner, adjust_over_cost
 from simul_bidding_env.Controller.Controller import Controller
 from simul_bidding_env.strategy.pid_bidding_strategy import PidBiddingStrategy
 
@@ -32,10 +33,11 @@ class PpoBiddingEnv:
         self.player_index = player_index
         self.episode = episode
 
-        # Initialise controller (owns agents, BiddingEnv, PvGenerator)
+        # Initialise controller with dummy agent (PPO overrides its actions)
+        dummy_agent = PidBiddingStrategy(exp_tempral_ratio=np.ones(48))
         self.bidding_controller = Controller(
             player_index=player_index,
-            player_agent=PidBiddingStrategy(exp_tempral_ratio=np.ones(48))   # player agent is driven externally by PPO
+            player_agent=dummy_agent
         )
         self.agents = self.bidding_controller.agents
         self.envs = self.bidding_controller.biddingEnv
@@ -210,7 +212,6 @@ class PpoBiddingEnv:
         Mirrors the overcost-adjustment loop from run_test.py.
         Iteratively drops bids for over-budget agents until no agent overspends.
         """
-        from run_test import get_winner, adjust_over_cost
 
         ratio_max = None
         xi_pit = slot_pit = cost_pit = is_exposed_pit = None
