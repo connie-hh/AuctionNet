@@ -6,3 +6,4 @@ from .iql_bidding_strategy import IqlBiddingStrategy as PlayerBiddingStrategy
 # from .bcq_bidding_strategy import BcqBiddingStrategy as PlayerBiddingStrategy
 # from .cql_bidding_strategy import CqlBiddingStrategy as PlayerBiddingStrategy
 # from .td3_bc_bidding_strategy import TD3_BCBiddingStrategy as PlayerBiddingStrategy
+# from .ppo_bidding_strategy import PpoBiddingStrategy as PlayerBiddingStrategy
