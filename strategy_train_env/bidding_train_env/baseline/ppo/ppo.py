@@ -49,7 +49,7 @@ class GaussianPolicy(nn.Module):
 
     def forward(self, state: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         x = self.net(state)
-        mu = torch.nn.functional.softplus(self.mu_head(x))  # keep alpha > 0
+        mu = torch.nn.functional.softplus(self.mu_head(x)) * 50 # keep alpha > 0
         std = self.log_std.exp().expand_as(mu)
         return mu, std
 
@@ -125,6 +125,9 @@ class BaselineNetwork(nn.Module):
         Args:
             returns: (batch_size,) array
             observations: (batch_size, state_dim) array
+            
+        Returns:
+            loss: scalar baseline loss value
         """
         returns = np2torch(returns)
         observations = np2torch(observations)
@@ -135,6 +138,8 @@ class BaselineNetwork(nn.Module):
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
+        
+        return loss.item()
 
 
 # ---------------------------------------------------------------------------
@@ -195,6 +200,7 @@ class PPO:
         """
         episode = 0
         episode_rewards = []
+        episode_costs = []
         paths = []
         t = 0
 
@@ -202,6 +208,7 @@ class PPO:
             state = self.env.reset()
             states, actions, old_logprobs, rewards = [], [], [], []
             episode_reward = 0
+            episode_cost = 0
 
             for step in range(self.max_ep_len):
                 states.append(state)
@@ -222,12 +229,15 @@ class PPO:
                 old_logprobs.append(old_logprob)
                 rewards.append(shaped_reward)
                 episode_reward += reward  # track raw reward for logging
+                episode_cost += info["cost"]
                 
                 state = next_state
                 t += 1
                 
                 if done or step == self.max_ep_len - 1:
                     episode_rewards.append(episode_reward)
+                    episode_costs.append(episode_cost)
+                    logger.debug(f"  Episode {episode}: Reward={episode_reward:.2f}, Cost={episode_cost:.2f}, Steps={step+1}")
                     break
                 if (not num_episodes) and t == self.batch_size:
                     break
@@ -244,7 +254,7 @@ class PPO:
             if num_episodes and episode >= num_episodes:
                 break
 
-        return paths, episode_rewards
+        return paths, episode_rewards, episode_costs
 
     def get_returns(self, paths: List[dict]) -> np.ndarray:
         """
@@ -284,6 +294,9 @@ class PPO:
             actions: (batch_size,)
             advantages: (batch_size,)
             old_logprobs: (batch_size,)
+            
+        Returns:
+            loss: scalar policy loss value
         """
         observations = np2torch(observations)
         actions = np2torch(actions).unsqueeze(-1)  # (batch_size, 1)
@@ -304,18 +317,42 @@ class PPO:
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
+        
+        return loss.item()
 
     def train(self):
         """Main training loop following reference implementation structure."""
         os.makedirs(self.save_path, exist_ok=True)
         
         all_total_rewards = []
+        all_total_costs = []
         averaged_total_rewards = []
+        averaged_total_costs = []
+
+        logger.info("="*60)
+        logger.info("Starting PPO Training")
+        logger.info(f"Total batches: {self.num_batches}")
+        logger.info(f"Batch size: {self.batch_size} timesteps")
+        logger.info(f"Update frequency: {self.update_freq} passes per batch")
+        logger.info(f"Max episode length: {self.max_ep_len}")
+        logger.info(f"Save path: {self.save_path}")
+        logger.info("="*60)
 
         for t in range(self.num_batches):
+            logger.info(f"\n{'='*60}")
+            logger.info(f"BATCH {t+1}/{self.num_batches}")
+            logger.info(f"{'='*60}")
+            
             # Collect minibatch of samples
-            paths, total_rewards = self.sample_path()
+            logger.info("Collecting rollouts...")
+            paths, total_rewards, total_costs = self.sample_path()
             all_total_rewards.extend(total_rewards)
+            all_total_costs.extend(total_costs)
+            
+            num_episodes = len(total_rewards)
+            total_timesteps = sum(len(path["observation"]) for path in paths)
+            
+            logger.info(f"Collected {num_episodes} episodes ({total_timesteps} timesteps)")
             
             observations = np.concatenate([path["observation"] for path in paths])
             actions = np.concatenate([path["action"] for path in paths])
@@ -327,28 +364,76 @@ class PPO:
             advantages = self.calculate_advantage(returns, observations)
 
             # Run training operations
+            logger.info(f"Running {self.update_freq} policy update passes...")
+            policy_losses = []
+            baseline_losses = []
+            
             for k in range(self.update_freq):
-                self.baseline_network.update_baseline(returns, observations)
-                self.update_policy(observations, actions, advantages, old_logprobs)
+                baseline_loss = self.baseline_network.update_baseline(returns, observations)
+                policy_loss = self.update_policy(observations, actions, advantages, old_logprobs)
+                policy_losses.append(policy_loss)
+                baseline_losses.append(baseline_loss)
+                
+                if k == 0 or (k + 1) % max(1, self.update_freq // 4) == 0:
+                    logger.debug(f"  Update {k+1}/{self.update_freq}: "
+                               f"Policy Loss={policy_loss:.4f}, "
+                               f"Baseline Loss={baseline_loss:.4f}")
 
-            # Logging
+            # Compute statistics
             avg_reward = np.mean(total_rewards)
-            sigma_reward = np.sqrt(np.var(total_rewards) / len(total_rewards))
-            msg = f"[BATCH {t:4d}]: Average reward: {avg_reward:7.2f} +/- {sigma_reward:7.2f}"
+            std_reward = np.std(total_rewards)
+            sigma_reward = std_reward / np.sqrt(len(total_rewards))
+            
+            avg_cost = np.mean(total_costs)
+            std_cost = np.std(total_costs)
+            
+            avg_policy_loss = np.mean(policy_losses)
+            avg_baseline_loss = np.mean(baseline_losses)
+            
+            avg_action = np.mean(actions)
+            std_action = np.std(actions)
+            
             averaged_total_rewards.append(avg_reward)
-            logger.info(msg)
-
+            averaged_total_costs.append(avg_cost)
+            
+            # Logging
+            logger.info(f"\n{'─'*60}")
+            logger.info(f"BATCH {t+1} SUMMARY:")
+            logger.info(f"{'─'*60}")
+            logger.info(f"Episodes:        {num_episodes}")
+            logger.info(f"Total Timesteps: {total_timesteps}")
+            logger.info(f"Reward:          {avg_reward:7.2f} ± {sigma_reward:6.2f} (std: {std_reward:6.2f})")
+            logger.info(f"Cost:            {avg_cost:7.2f} ± {std_cost/np.sqrt(len(total_costs)):6.2f} (std: {std_cost:6.2f})")
+            logger.info(f"Policy Loss:     {avg_policy_loss:7.4f}")
+            logger.info(f"Baseline Loss:   {avg_baseline_loss:7.4f}")
+            logger.info(f"Action (alpha):  {avg_action:7.4f} ± {std_action:6.4f}")
+            logger.info(f"Returns:         mean={np.mean(returns):7.2f}, std={np.std(returns):6.2f}")
+            logger.info(f"Advantages:      mean={np.mean(advantages):7.4f}, std={np.std(advantages):6.4f}")
+            
             # Save checkpoint every 10 batches
             if (t + 1) % 10 == 0:
+                logger.info(f"\nSaving checkpoint at batch {t+1}...")
                 self._save_checkpoint(t + 1)
 
         # Final save
+        logger.info("\n" + "="*60)
+        logger.info("Training Complete!")
+        logger.info("="*60)
         self._save_checkpoint("final")
-        logger.info(f"Training complete. Model saved to {self.save_path}/")
+        logger.info(f"Final model saved to {self.save_path}/")
         
         # Save reward history
         np.save(os.path.join(self.save_path, "rewards.npy"), averaged_total_rewards)
-        return averaged_total_rewards
+        np.save(os.path.join(self.save_path, "costs.npy"), averaged_total_costs)
+        
+        # Final statistics
+        logger.info(f"\nFinal Statistics:")
+        logger.info(f"  Average Reward (last 10 batches): {np.mean(averaged_total_rewards[-10:]):7.2f}")
+        logger.info(f"  Average Cost (last 10 batches):   {np.mean(averaged_total_costs[-10:]):7.2f}")
+        logger.info(f"  Best Reward:  {np.max(averaged_total_rewards):7.2f} (batch {np.argmax(averaged_total_rewards)+1})")
+        logger.info(f"  Total Episodes Trained: {len(all_total_rewards)}")
+        
+        return averaged_total_rewards, averaged_total_costs
 
     def _shape_reward(self, conversions: float, cost: float, cpa_target: float) -> float:
         """Add CPA-violation penalty to raw conversion reward."""

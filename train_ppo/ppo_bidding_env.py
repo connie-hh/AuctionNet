@@ -1,8 +1,12 @@
+import logging
 import numpy as np
 from typing import Tuple, Optional
 from run.run_test import get_winner, adjust_over_cost
 from simul_bidding_env.Controller.Controller import Controller
 from simul_bidding_env.strategy.pid_bidding_strategy import PidBiddingStrategy
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
 class PpoBiddingEnv:
@@ -38,8 +42,10 @@ class PpoBiddingEnv:
         self.bidding_controller = Controller(
             player_index=player_index,
             player_agent=dummy_agent,
+            num_tick=48,
             num_agent_category=8,
             num_category=6,
+            pv_num=1000,
         )
         self.agents = self.bidding_controller.agents
         self.envs = self.bidding_controller.biddingEnv
@@ -92,6 +98,18 @@ class PpoBiddingEnv:
         bids = self._collect_bids(pv_values, pvalue_sigmas, action, tick)
         bids = np.array(bids).T   # (num_pv, num_agent)
         bids[bids < 0] = 0
+        
+        # Diagnostic logging (first tick of first few episodes)
+        if tick == 0 and self.episode < 3:
+            p = self.player_index
+            player_bids = bids[:, p]
+            player_pvalues = pv_values[:, p]
+            logger.info(f"[Episode {self.episode}, Tick {tick}] Diagnostics:")
+            logger.info(f"  Action (alpha): {action:.4f}")
+            logger.info(f"  PValues: min={player_pvalues.min():.6f}, mean={player_pvalues.mean():.6f}, max={player_pvalues.max():.6f}")
+            logger.info(f"  Player bids: min={player_bids.min():.6f}, mean={player_bids.mean():.6f}, max={player_bids.max():.6f}")
+            logger.info(f"  Reserve price: {self.envs.reserve_pv_price:.6f}")
+            logger.info(f"  Bids above reserve: {(player_bids > self.envs.reserve_pv_price).sum()}/{len(player_bids)}")
 
         # --- Overcost adjustment loop (mirrors run_test.py) --------------
         remaining_budgets = np.array([a.remaining_budget for a in self.agents])
@@ -117,6 +135,15 @@ class PpoBiddingEnv:
         player_cost = cost_per_agent[self.player_index]
         player_reward = float(reward_per_agent[self.player_index])
         player_budget = self.agents[self.player_index].remaining_budget
+        
+        # Diagnostic logging for first tick
+        if tick == 0 and self.episode < 3:
+            p = self.player_index
+            logger.info(f"  Player wins (xi=1): {xi_pit[p].sum()}/{len(xi_pit[p])}")
+            logger.info(f"  Player exposures: {is_exposed_pit[p].sum()}")
+            logger.info(f"  Player conversions: {player_reward:.2f}")
+            logger.info(f"  Player cost: {player_cost:.2f}")
+            logger.info(f"  Remaining budget: {player_budget:.2f}")
 
         self.cumulative_cost += player_cost
         self.cumulative_reward += player_reward
