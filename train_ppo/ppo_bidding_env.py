@@ -111,6 +111,9 @@ class PpoBiddingEnv:
 
         # --- Tick bookkeeping -------------------------------------------
         player_cost = cost_per_agent[self.player_index]
+        ## To (matching math/paper):
+        # rewards are sum of x_ij * v_ij, based on paper.
+        #player_reward = np.sum(conversion_action_pit[self.player_index] * pv_values[:, self.player_index])
         player_reward = float(reward_per_agent[self.player_index])
         player_budget = self.agents[self.player_index].remaining_budget
 
