@@ -37,7 +37,9 @@ class PpoBiddingEnv:
         dummy_agent = PidBiddingStrategy(exp_tempral_ratio=np.ones(48))
         self.bidding_controller = Controller(
             player_index=player_index,
-            player_agent=dummy_agent
+            player_agent=dummy_agent,
+            num_agent_category=8,
+            num_category=6,
         )
         self.agents = self.bidding_controller.agents
         self.envs = self.bidding_controller.biddingEnv
