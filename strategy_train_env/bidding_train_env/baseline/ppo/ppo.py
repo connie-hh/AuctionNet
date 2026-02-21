@@ -45,7 +45,11 @@ class GaussianPolicy(nn.Module):
             nn.Tanh(),
         )
         self.mu_head = nn.Linear(hidden_dim, action_dim)
-        self.log_std = nn.Parameter(torch.zeros(action_dim))  # learnable, state-independent
+        # Linda: change bias initialization
+        nn.init.constant_(self.mu_head.bias, 4.5)
+        # self.log_std = nn.Parameter(torch.zeros(action_dim))  # learnable, state-independent
+        # Linda: add exploration bonus
+        self.log_std = nn.Parameter(torch.zeros(action_dim) * 1.0)
 
     def forward(self, state: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         x = self.net(state)
@@ -165,8 +169,9 @@ class PPO:
         num_batches: int = 100,
         update_freq: int = 4,
         max_ep_len: int = 48,
-        cpa_penalty_coef: float = 0.1,
-        save_path: str = "saved_model/ppo",
+        cpa_penalty_coef: float = 0.01,
+        save_path: str = "strategy_train_env/saved_model/ppo",
+        exploration_decay: float = 0.995,
     ):
         self.env = env
         self.state_dim = state_dim
@@ -178,6 +183,7 @@ class PPO:
         self.max_ep_len = max_ep_len
         self.cpa_penalty_coef = cpa_penalty_coef
         self.save_path = save_path
+        self.exploration_decay = exploration_decay
 
         # Initialize policy and baseline
         self.policy = GaussianPolicy(state_dim, action_dim=1, hidden_dim=hidden_dim)
@@ -395,6 +401,11 @@ class PPO:
             
             averaged_total_rewards.append(avg_reward)
             averaged_total_costs.append(avg_cost)
+
+            # Linda: Decay exploration
+            with torch.no_grad():
+                self.policy.log_std.data *= self.exploration_decay
+                current_std = self.policy.log_std.exp().item()
             
             # Logging
             logger.info(f"\n{'─'*60}")
@@ -407,6 +418,7 @@ class PPO:
             logger.info(f"Policy Loss:     {avg_policy_loss:7.4f}")
             logger.info(f"Baseline Loss:   {avg_baseline_loss:7.4f}")
             logger.info(f"Action (alpha):  {avg_action:7.4f} ± {std_action:6.4f}")
+            logger.info(f"Exploration std: {current_std:7.4f}")
             logger.info(f"Returns:         mean={np.mean(returns):7.2f}, std={np.std(returns):6.2f}")
             logger.info(f"Advantages:      mean={np.mean(advantages):7.4f}, std={np.std(advantages):6.4f}")
             

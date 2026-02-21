@@ -119,7 +119,7 @@ class PpoBiddingEnv:
         # --- Update budgets ----------------------------------------------
         real_cost = (cost_pit * is_exposed_pit)          # (num_agent, num_pv)
         cost_per_agent = real_cost.sum(axis=1)
-        reward_per_agent = conversion_action_pit.sum(axis=1)
+        reward_per_agent = (xi_pit * pv_values.T).sum(axis=1) # Linda: weight this by the value, potentially also add the log
 
         for i, agent in enumerate(self.agents):
             agent.remaining_budget -= cost_per_agent[i]
