@@ -490,7 +490,7 @@ if __name__ == "__main__":
         num_batches=100,
         update_freq=4,
         max_ep_len=48,
-        save_path="saved_model/ppo",
+        save_path="saved_model/ppo_log_barrier",
     )
     
     agent.train()
