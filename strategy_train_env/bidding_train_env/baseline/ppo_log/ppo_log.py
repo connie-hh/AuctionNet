@@ -474,8 +474,9 @@ class PPO:
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    #from simul_bidding_env.strategy.pid_bidding_strategy import PidBiddingStrategy
-    
+    from simul_bidding_env.strategy.pid_bidding_strategy import PidBiddingStrategy
+    from train_ppo.ppo_bidding_env_log_barrier import PpoBiddingEnv_LogBarrier 
+
     env = PpoBiddingEnv_LogBarrier(player_index=0)
     
     agent = PPO(
