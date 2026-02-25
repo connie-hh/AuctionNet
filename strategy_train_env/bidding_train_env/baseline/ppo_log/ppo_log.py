@@ -7,7 +7,7 @@ from torch.distributions import Normal
 from typing import List, Tuple
 import logging
 
-from train_ppo.ppo_bidding_env_log_barrier import PpoBiddingEnv_LogBarrier as PpoBiddingEnv
+from train_ppo.ppo_bidding_env_log_barrier import PpoBiddingEnv_LogBarrier
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -158,7 +158,7 @@ class PPO:
 
     def __init__(
         self,
-        env: PpoBiddingEnv,
+        env: PpoBiddingEnv_LogBarrier,
         state_dim: int = 16,
         hidden_dim: int = 128,
         lr_policy: float = 3e-4,
@@ -476,7 +476,7 @@ class PPO:
 if __name__ == "__main__":
     from simul_bidding_env.strategy.pid_bidding_strategy import PidBiddingStrategy
     
-    env = PpoBiddingEnv(player_index=0)
+    env = PpoBiddingEnv_LogBarrier(player_index=0)
     
     agent = PPO(
         env=env,
