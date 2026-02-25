@@ -49,7 +49,7 @@ class GaussianPolicy(nn.Module):
         nn.init.constant_(self.mu_head.bias, 4.5)
         # self.log_std = nn.Parameter(torch.zeros(action_dim))  # learnable, state-independent
         # Linda: add exploration bonus
-        self.log_std = nn.Parameter(torch.zeros(action_dim) * 1.0)
+        self.log_std = nn.Parameter(torch.ones(action_dim) * 1.0)
 
     def forward(self, state: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         x = self.net(state)
