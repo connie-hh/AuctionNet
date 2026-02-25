@@ -474,7 +474,7 @@ class PPO:
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    from simul_bidding_env.strategy.pid_bidding_strategy import PidBiddingStrategy
+    #from simul_bidding_env.strategy.pid_bidding_strategy import PidBiddingStrategy
     
     env = PpoBiddingEnv_LogBarrier(player_index=0)
     
