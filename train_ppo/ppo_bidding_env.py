@@ -68,7 +68,7 @@ class PpoBiddingEnv:
         self._reset_episode_state()
         print("The names of all the agents I am bidding against:", {a.__class__.__name__ for i, a in enumerate(self.agents) if i in self.active_agent_indices and i != self.player_index})
 
-        logger.info(f"Initialized PpoBiddingEnv. Active competitors: {len(self.active_agent_indices)-1} IQL agents.")
+        logger.info(f"Initialized PpoBiddingEnv. Active competitors: {len(self.active_agent_indices)-1} IQL  & onlineLP agents.")
 
     def _identify_subset_indices(self) -> List[int]:
         """Identifies indices of agents that match the IQL strategy."""
@@ -77,7 +77,7 @@ class PpoBiddingEnv:
             if i == self.player_index:
                 continue
             # Identify agents by their specific class type
-            if isinstance(agent, OnlineLpBiddingStrategy):# or isinstance(agent, BcqBiddingStrategy) or isinstance(agent, MbrlMopoBiddingStrategy) or isinstance(agent, OnlineLpBiddingStrategy) or isinstance(agent, TD3_BCBiddingStrategy) or isinstance(agent, CqlBiddingStrategy) or isinstance(agent, BcBiddingStrategy) or isinstance(agent, MbrlComboMicroBiddingStrategy):
+            if isinstance(agent, IqlBiddingStrategy) or isinstance(agent, OnlineLpBiddingStrategy): #or isinstance(agent, MbrlMopoBiddingStrategy) or isinstance(agent, OnlineLpBiddingStrategy) or isinstance(agent, TD3_BCBiddingStrategy) or isinstance(agent, CqlBiddingStrategy) or isinstance(agent, BcBiddingStrategy) or isinstance(agent, MbrlComboMicroBiddingStrategy):
                 indices.append(i)
         
         # Fallback if no agents match to avoid an empty auction
