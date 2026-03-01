@@ -46,11 +46,17 @@ class PpoBiddingEnv:
         self._reset_episode_state()
 
     def _identify_subset_indices(self) -> List[int]:
-        """Identifies indices of agents matching the tag, plus the player index."""
         indices = [self.player_index]
         for i, agent in enumerate(self.agents):
-            if i != self.player_index and self.competitor_subset_tag in agent.name:
+            # Use .get('name') or .name depending on your object structure
+            name = getattr(agent, 'name', '') 
+            if i != self.player_index and self.competitor_subset_tag in name:
                 indices.append(i)
+        
+        # FALLBACK: If no competitors found, include everyone to avoid dead environment
+        if len(indices) == 1:
+            logger.warning(f"No agents found with tag '{self.competitor_subset_tag}'. Defaulting to ALL agents.")
+            return list(range(len(self.agents)))
         return indices
 
     # ------------------------------------------------------------------
