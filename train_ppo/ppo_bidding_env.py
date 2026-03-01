@@ -370,3 +370,6 @@ class PpoBiddingEnv:
         ], dtype=np.float32)
 
         return state
+
+eps = 1e-8
+tau = 0.01

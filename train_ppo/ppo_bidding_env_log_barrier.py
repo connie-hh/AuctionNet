@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 eps = 1e-8
 tau = 0.01
 
-class PpoBiddingEnv:
+class PpoBiddingEnv_LogBarrier:
     """
     Finalized Gym-style environment for PPO. 
     Implements Episodic Reward logic to avoid the 'Reward Design Trap'[cite: 170].
