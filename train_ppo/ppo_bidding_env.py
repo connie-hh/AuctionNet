@@ -18,7 +18,7 @@ class PpoBiddingEnv:
     NUM_TICK = 48
     STATE_DIM = 16
 
-    def __init__(self, player_index: int = 0, episode: int = 0, competitor_subset_tag: str = "IQL"):
+    def __init__(self, player_index: int = 0, episode: int = 0, competitor_subset_tags: List[str] = ["IQL, OnlineLP"]:
         self.player_index = player_index
         self.episode = episode
         self.competitor_subset_tag = competitor_subset_tag
