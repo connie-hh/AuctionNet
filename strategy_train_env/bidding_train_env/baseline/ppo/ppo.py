@@ -169,7 +169,7 @@ class PPO:
         num_batches: int = 100,
         update_freq: int = 4,
         max_ep_len: int = 48,
-        cpa_penalty_coef: float = 0.01,
+        cpa_penalty_coef: float = 0.0,
         save_path: str = "strategy_train_env/saved_model/ppo",
         exploration_decay: float = 0.995,
     ):
