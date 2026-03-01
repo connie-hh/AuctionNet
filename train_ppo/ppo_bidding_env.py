@@ -4,6 +4,8 @@ from typing import Tuple, Optional, List
 from run.run_test import get_winner, adjust_over_cost
 from simul_bidding_env.Controller.Controller import Controller
 from simul_bidding_env.strategy.pid_bidding_strategy import PidBiddingStrategy
+# Added import to identify target competitors
+from simul_bidding_env.strategy.iql_bidding_strategy import IqlBiddingStrategy
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -12,16 +14,30 @@ logger = logging.getLogger(__name__)
 class PpoBiddingEnv:
     """
     Gym-style environment wrapper for PPO training, adapted from run_test.py.
-    Modified to train against a specific subset of agents (default: 'IQL').
+
+    Wraps the existing BiddingEnv auction simulator and NeurIPSPvGen traffic
+    generator into a step-by-step interface that PPO can interact with.
+
+    State vector (16 features), matching TrainDataGenerator:
+        timeleft, bgtleft,
+        avg_bid_all, avg_bid_last_3,
+        avg_leastWinningCost_all, avg_pValue_all,
+        avg_conversionAction_all, avg_xi_all,
+        avg_leastWinningCost_last_3, avg_pValue_last_3,
+        avg_conversionAction_last_3, avg_xi_last_3,
+        pValue_mean, timeStepIndex_volume,
+        last_3_timeStepIndexs_volume, historical_volume
+
+    Action:
+        A scalar alpha (CPA multiplier). Bids are computed as alpha * pValues.
     """
 
     NUM_TICK = 48
     STATE_DIM = 16
 
-    def __init__(self, player_index: int = 0, episode: int = 0, competitor_subset_tag: str = "IQL"):
+    def __init__(self, player_index: int = 0, episode: int = 0):
         self.player_index = player_index
         self.episode = episode
-        self.competitor_subset_tag = competitor_subset_tag
 
         # Initialise controller with dummy agent (PPO overrides its actions)
         dummy_agent = PidBiddingStrategy(exp_tempral_ratio=np.ones(48))
@@ -29,33 +45,36 @@ class PpoBiddingEnv:
             player_index=player_index,
             player_agent=dummy_agent,
             num_tick=48,
-            num_agent_category=8,
-            num_category=6,
+            num_agent_category=8, # Kept at 8 to ensure baseline files are found
+            num_category=6,       # Kept at 6 to avoid FileNotFoundError
             pv_num=1000,
         )
+       
         self.agents = self.bidding_controller.agents
         self.envs = self.bidding_controller.biddingEnv
         self.pv_generator = self.bidding_controller.pvGenerator
 
-        # --- NEW: Identify the subset of active agents ---
+        # --- NEW: Filter for IQL agents ---
         self.active_agent_indices = self._identify_subset_indices()
-        logger.info(f"PpoBiddingEnv initialized. Training against subset: '{self.competitor_subset_tag}' "
-                    f"({len(self.active_agent_indices)} active competitors).")
 
         self.num_agent = len(self.agents)
         self._reset_episode_state()
+        
+        logger.info(f"Initialized PpoBiddingEnv. Active competitors: {len(self.active_agent_indices)-1} IQL agents.")
 
     def _identify_subset_indices(self) -> List[int]:
+        """Identifies indices of agents that match the IQL strategy."""
         indices = [self.player_index]
         for i, agent in enumerate(self.agents):
-            # Use .get('name') or .name depending on your object structure
-            name = getattr(agent, 'name', '') 
-            if i != self.player_index and self.competitor_subset_tag in name:
+            if i == self.player_index:
+                continue
+            # Identify agents by their specific class type
+            if isinstance(agent, IqlBiddingStrategy):
                 indices.append(i)
         
-        # FALLBACK: If no competitors found, include everyone to avoid dead environment
+        # Fallback if no agents match to avoid an empty auction
         if len(indices) == 1:
-            logger.warning(f"No agents found with tag '{self.competitor_subset_tag}'. Defaulting to ALL agents.")
+            logger.warning("No IQL agents found. Defaulting to all agents.")
             return list(range(len(self.agents)))
         return indices
 
@@ -75,13 +94,24 @@ class PpoBiddingEnv:
 
     def step(self, action: float) -> Tuple[np.ndarray, float, bool, dict]:
         tick = self.tick_index
-        pv_values = self.pv_generator.pv_values[tick]
-        pvalue_sigmas = self.pv_generator.pValueSigmas[tick]
+        pv_values = self.pv_generator.pv_values[tick]        # (num_pv, num_agent)
+        pvalue_sigmas = self.pv_generator.pValueSigmas[tick] # (num_pv, num_agent)
 
-        # --- Build bids for all agents (Filtered by subset) --------------
+        # --- Build bids for all agents (Filtered) ------------------------
         bids = self._collect_bids(pv_values, pvalue_sigmas, action, tick)
-        bids = np.array(bids).T
+        bids = np.array(bids).T   # (num_pv, num_agent)
         bids[bids < 0] = 0
+        
+        if tick == 0 and self.episode < 3:
+            p = self.player_index
+            player_bids = bids[:, p]
+            player_pvalues = pv_values[:, p]
+            logger.info(f"[Episode {self.episode}, Tick {tick}] Diagnostics:")
+            logger.info(f"  Action (alpha): {action:.4f}")
+            logger.info(f"  PValues: min={player_pvalues.min():.6f}, mean={player_pvalues.mean():.6f}, max={player_pvalues.max():.6f}")
+            logger.info(f"  Player bids: min={player_bids.min():.6f}, mean={player_bids.mean():.6f}, max={player_bids.max():.6f}")
+            logger.info(f"  Reserve price: {self.envs.reserve_pv_price:.6f}")
+            logger.info(f"  Bids above reserve: {(player_bids > self.envs.reserve_pv_price).sum()}/{len(player_bids)}")
 
         # --- Overcost adjustment loop (mirrors run_test.py) --------------
         remaining_budgets = np.array([a.remaining_budget for a in self.agents])
@@ -89,24 +119,30 @@ class PpoBiddingEnv:
             self._run_auction_with_overcost_guard(pv_values, pvalue_sigmas, bids, remaining_budgets)
 
         # --- Update budgets ----------------------------------------------
-        real_cost = (cost_pit * is_exposed_pit)
+        real_cost = (cost_pit * is_exposed_pit)          # (num_agent, num_pv)
         cost_per_agent = real_cost.sum(axis=1)
-        reward_per_agent = conversion_action_pit.sum(axis=1)
+        reward_per_agent = conversion_action_pit.sum(axis=1)              # (num_agent,)
 
         for i, agent in enumerate(self.agents):
             agent.remaining_budget -= cost_per_agent[i]
 
-        # --- Update history arrays ---------------------------------------
         self._update_history(
             pv_values, pvalue_sigmas, bids,
             xi_pit, slot_pit, cost_pit,
             is_exposed_pit, conversion_action_pit, lwc_pit
         )
 
-        # --- Tick bookkeeping -------------------------------------------
         player_cost = cost_per_agent[self.player_index]
         player_reward = float(reward_per_agent[self.player_index])
         player_budget = self.agents[self.player_index].remaining_budget
+        
+        if tick == 0 and self.episode < 3:
+            p = self.player_index
+            logger.info(f"  Player wins (xi=1): {xi_pit[p].sum()}/{len(xi_pit[p])}")
+            logger.info(f"  Player exposures: {is_exposed_pit[p].sum()}")
+            logger.info(f"  Player conversions: {player_reward:.2f}")
+            logger.info(f"  Player cost: {player_cost:.2f}")
+            logger.info(f"  Remaining budget: {player_budget:.2f}")
 
         self.cumulative_cost += player_cost
         self.cumulative_reward += player_reward
@@ -138,17 +174,20 @@ class PpoBiddingEnv:
         self.tick_index = 0
         self.cumulative_cost = 0.0
         self.cumulative_reward = 0.0
+
         self.history_pvalue_infos = []
         self.history_bids = []
         self.history_auction_results = []
         self.history_impression_results = []
         self.history_least_winning_costs = []
+
         self._sum_bid = np.zeros(self.num_agent)
         self._sum_lwc = np.zeros(self.num_agent)
         self._sum_conv = np.zeros(self.num_agent)
         self._sum_xi = np.zeros(self.num_agent)
         self._sum_pvalue = np.zeros(self.num_agent)
         self._count = np.zeros(self.num_agent)
+
         self._last3_bids = []
         self._last3_lwc = []
         self._last3_conv = []
@@ -164,24 +203,30 @@ class PpoBiddingEnv:
         tick: int,
     ) -> list:
         """
-        Builds bids for agents. Only player and subset agents participate.
+        Builds bids for all agents. 
+        Forces non-active (non-IQL) agents to bid 0.
         """
         bids = []
-        for i, agent in enumerate(self.agents):
-            # If not in the active subset, bid 0
+        # Use shape to ensure we don't index past traffic data availability
+        num_slots = pv_values.shape[1]
+
+        for i in range(num_slots):
+            # Safe indexing if Controller and traffic data are mismatched
+            if i >= len(self.agents):
+                bids.append(np.zeros(pv_values.shape[0]))
+                continue
+
+            agent = self.agents[i]
+            
+            # --- SUBSET FILTER ---
             if i not in self.active_agent_indices:
                 bids.append(np.zeros(pv_values.shape[0]))
                 continue
 
-            # If out of budget, bid 0
             if agent.remaining_budget < self.envs.min_remaining_budget:
                 bids.append(np.zeros(pv_values.shape[0]))
-            
-            # PPO player
             elif i == self.player_index:
                 bids.append(player_action * pv_values[:, i])
-            
-            # Competitor in the subset
             else:
                 bids.append(agent.bidding(
                     tick,
@@ -258,6 +303,7 @@ class PpoBiddingEnv:
         p = self.player_index
         tick = self.tick_index
         n = self._count[p]
+
         budget = self.agents[p].budget
         remaining = self.agents[p].remaining_budget
         timeleft = (self.NUM_TICK - tick) / self.NUM_TICK
