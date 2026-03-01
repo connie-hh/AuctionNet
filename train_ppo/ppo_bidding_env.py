@@ -5,7 +5,6 @@ from run.run_test import get_winner, adjust_over_cost
 from simul_bidding_env.Controller.Controller import Controller
 from simul_bidding_env.strategy.pid_bidding_strategy import PidBiddingStrategy
 
-# Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -13,36 +12,18 @@ logger = logging.getLogger(__name__)
 class PpoBiddingEnv:
     """
     Gym-style environment wrapper for PPO training, adapted from run_test.py.
-    Modified to train against a specific subset of agents identified by tags.
-
-    State vector (16 features), matching TrainDataGenerator:
-        timeleft, bgtleft,
-        avg_bid_all, avg_bid_last_3,
-        avg_leastWinningCost_all, avg_pValue_all,
-        avg_conversionAction_all, avg_xi_all,
-        avg_leastWinningCost_last_3, avg_pValue_last_3,
-        avg_conversionAction_last_3, avg_xi_last_3,
-        pValue_mean, timeStepIndex_volume,
-        last_3_timeStepIndexs_volume, historical_volume
-
-    Action:
-        A scalar alpha (CPA multiplier). Bids are computed as alpha * pValues.
+    Modified to train against a specific subset of agents (default: 'IQL').
     """
 
     NUM_TICK = 48
     STATE_DIM = 16
 
-    def __init__(self, player_index: int = 0, episode: int = 0, competitor_subset_tags: List[str] = ["IQL"]):
-        """
-        Initializes the environment.
-        @competitor_subset_tags: List of strings. Only agents with these tags in their 
-                                 name will participate in the auction.
-        """
+    def __init__(self, player_index: int = 0, episode: int = 0, competitor_subset_tag: str = "OnlineLP"):
         self.player_index = player_index
         self.episode = episode
-        self.competitor_subset_tags = competitor_subset_tags
+        self.competitor_subset_tag = competitor_subset_tag
 
-        # Initialize controller with dummy agent (PPO overrides its actions)
+        # Initialise controller with dummy agent (PPO overrides its actions)
         dummy_agent = PidBiddingStrategy(exp_tempral_ratio=np.ones(48))
         self.bidding_controller = Controller(
             player_index=player_index,
@@ -56,24 +37,19 @@ class PpoBiddingEnv:
         self.envs = self.bidding_controller.biddingEnv
         self.pv_generator = self.bidding_controller.pvGenerator
 
-        # Identify which competitors match the provided tags
+        # --- NEW: Identify the subset of active agents ---
         self.active_agent_indices = self._identify_subset_indices()
-        
-        active_names = [self.agents[i].name for i in self.active_agent_indices if i != self.player_index]
-        logger.info(f"PpoBiddingEnv initialized with tags: {self.competitor_subset_tags}")
-        logger.info(f"Active competitors ({len(active_names)}): {active_names}")
+        logger.info(f"PpoBiddingEnv initialized. Training against subset: '{self.competitor_subset_tag}' "
+                    f"({len(self.active_agent_indices)} active competitors).")
 
         self.num_agent = len(self.agents)
         self._reset_episode_state()
 
     def _identify_subset_indices(self) -> List[int]:
-        """Identifies agents whose names match ANY of the tags in competitor_subset_tags."""
+        """Identifies indices of agents matching the tag, plus the player index."""
         indices = [self.player_index]
         for i, agent in enumerate(self.agents):
-            if i == self.player_index:
-                continue
-            # Check if any of the tags appear in the agent's name
-            if any(tag in agent.name for tag in self.competitor_subset_tags):
+            if i != self.player_index and self.competitor_subset_tag in agent.name:
                 indices.append(i)
         return indices
 
@@ -82,7 +58,6 @@ class PpoBiddingEnv:
     # ------------------------------------------------------------------
 
     def reset(self, episode: Optional[int] = None) -> np.ndarray:
-        """Resets the environment for a new episode."""
         if episode is not None:
             self.episode = episode
         else:
@@ -93,22 +68,21 @@ class PpoBiddingEnv:
         return self._build_state()
 
     def step(self, action: float) -> Tuple[np.ndarray, float, bool, dict]:
-        """Advances the environment by one timestep."""
         tick = self.tick_index
         pv_values = self.pv_generator.pv_values[tick]
         pvalue_sigmas = self.pv_generator.pValueSigmas[tick]
 
-        # --- Build bids for agents (only subset participates) ---
+        # --- Build bids for all agents (Filtered by subset) --------------
         bids = self._collect_bids(pv_values, pvalue_sigmas, action, tick)
         bids = np.array(bids).T
         bids[bids < 0] = 0
-        
-        # --- Overcost adjustment loop ---
+
+        # --- Overcost adjustment loop (mirrors run_test.py) --------------
         remaining_budgets = np.array([a.remaining_budget for a in self.agents])
         bids, xi_pit, slot_pit, cost_pit, is_exposed_pit, conversion_action_pit, lwc_pit = \
             self._run_auction_with_overcost_guard(pv_values, pvalue_sigmas, bids, remaining_budgets)
 
-        # --- Update budgets ---
+        # --- Update budgets ----------------------------------------------
         real_cost = (cost_pit * is_exposed_pit)
         cost_per_agent = real_cost.sum(axis=1)
         reward_per_agent = conversion_action_pit.sum(axis=1)
@@ -116,14 +90,14 @@ class PpoBiddingEnv:
         for i, agent in enumerate(self.agents):
             agent.remaining_budget -= cost_per_agent[i]
 
-        # --- Update history arrays ---
+        # --- Update history arrays ---------------------------------------
         self._update_history(
             pv_values, pvalue_sigmas, bids,
             xi_pit, slot_pit, cost_pit,
             is_exposed_pit, conversion_action_pit, lwc_pit
         )
 
-        # --- Tick bookkeeping ---
+        # --- Tick bookkeeping -------------------------------------------
         player_cost = cost_per_agent[self.player_index]
         player_reward = float(reward_per_agent[self.player_index])
         player_budget = self.agents[self.player_index].remaining_budget
@@ -155,24 +129,20 @@ class PpoBiddingEnv:
     # ------------------------------------------------------------------
 
     def _reset_episode_state(self) -> None:
-        """Clears per-episode tracking variables."""
         self.tick_index = 0
         self.cumulative_cost = 0.0
         self.cumulative_reward = 0.0
-
         self.history_pvalue_infos = []
         self.history_bids = []
         self.history_auction_results = []
         self.history_impression_results = []
         self.history_least_winning_costs = []
-
         self._sum_bid = np.zeros(self.num_agent)
         self._sum_lwc = np.zeros(self.num_agent)
         self._sum_conv = np.zeros(self.num_agent)
         self._sum_xi = np.zeros(self.num_agent)
         self._sum_pvalue = np.zeros(self.num_agent)
         self._count = np.zeros(self.num_agent)
-
         self._last3_bids = []
         self._last3_lwc = []
         self._last3_conv = []
@@ -187,18 +157,25 @@ class PpoBiddingEnv:
         player_action: float,
         tick: int,
     ) -> list:
-        """Builds bids. Only player and subset agents participate."""
+        """
+        Builds bids for agents. Only player and subset agents participate.
+        """
         bids = []
         for i, agent in enumerate(self.agents):
-            # If not in the active subset, return 0 bids
+            # If not in the active subset, bid 0
             if i not in self.active_agent_indices:
                 bids.append(np.zeros(pv_values.shape[0]))
                 continue
 
+            # If out of budget, bid 0
             if agent.remaining_budget < self.envs.min_remaining_budget:
                 bids.append(np.zeros(pv_values.shape[0]))
+            
+            # PPO player
             elif i == self.player_index:
                 bids.append(player_action * pv_values[:, i])
+            
+            # Competitor in the subset
             else:
                 bids.append(agent.bidding(
                     tick,
@@ -212,14 +189,7 @@ class PpoBiddingEnv:
                 ))
         return bids
 
-    def _run_auction_with_overcost_guard(
-        self,
-        pv_values: np.ndarray,
-        pvalue_sigmas: np.ndarray,
-        bids: np.ndarray,
-        remaining_budgets: np.ndarray,
-    ):
-        """Mirrors the overcost-adjustment loop from run_test.py."""
+    def _run_auction_with_overcost_guard(self, pv_values, pvalue_sigmas, bids, remaining_budgets):
         ratio_max = None
         xi_pit = slot_pit = cost_pit = is_exposed_pit = None
         conversion_action_pit = lwc_pit = None
@@ -227,9 +197,7 @@ class PpoBiddingEnv:
         while ratio_max is None or ratio_max > 0:
             if ratio_max is not None and ratio_max > 0:
                 real_cost = (cost_pit * is_exposed_pit).sum(axis=1)
-                over_cost_ratio = np.maximum(
-                    (real_cost - remaining_budgets) / (real_cost + 1e-4), 0
-                )
+                over_cost_ratio = np.maximum((real_cost - remaining_budgets) / (real_cost + 1e-4), 0)
                 winner_pit = get_winner(slot_pit)
                 adjust_over_cost(bids, over_cost_ratio, self.envs.slot_coefficients, winner_pit)
 
@@ -237,20 +205,13 @@ class PpoBiddingEnv:
                 self.envs.simulate_ad_bidding(pv_values, pvalue_sigmas, bids)
 
             real_cost = (cost_pit * is_exposed_pit).sum(axis=1)
-            over_cost_ratio = np.maximum(
-                (real_cost - remaining_budgets) / (real_cost + 1e-4), 0
-            )
+            over_cost_ratio = np.maximum((real_cost - remaining_budgets) / (real_cost + 1e-4), 0)
             ratio_max = over_cost_ratio.max()
 
         return bids, xi_pit, slot_pit, cost_pit, is_exposed_pit, conversion_action_pit, lwc_pit
 
-    def _update_history(
-        self,
-        pv_values, pvalue_sigmas, bids,
-        xi_pit, slot_pit, cost_pit,
-        is_exposed_pit, conversion_action_pit, lwc_pit,
-    ) -> None:
-        """Updates all history arrays and running stat accumulators."""
+    def _update_history(self, pv_values, pvalue_sigmas, bids, xi_pit, slot_pit, cost_pit, 
+                        is_exposed_pit, conversion_action_pit, lwc_pit) -> None:
         p = self.player_index
         tick_pv_num = pv_values.shape[0]
 
@@ -288,11 +249,9 @@ class PpoBiddingEnv:
         self.history_impression_results.append(np.stack((is_exposed_pit, conversion_action_pit), axis=-1))
 
     def _build_state(self) -> np.ndarray:
-        """Constructs the 16-feature state vector."""
         p = self.player_index
         tick = self.tick_index
         n = self._count[p]
-
         budget = self.agents[p].budget
         remaining = self.agents[p].remaining_budget
         timeleft = (self.NUM_TICK - tick) / self.NUM_TICK
