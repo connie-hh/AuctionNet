@@ -59,7 +59,8 @@ class PpoBiddingEnv:
 
         self.num_agent = len(self.agents)
         self._reset_episode_state()
-        
+        print("The names of all the agents I am bidding against:", {a.__class__.__name__ for i, a in enumerate(self.agents) if i in self.active_agent_indices and i != self.player_index})
+
         logger.info(f"Initialized PpoBiddingEnv. Active competitors: {len(self.active_agent_indices)-1} IQL agents.")
 
     def _identify_subset_indices(self) -> List[int]:
