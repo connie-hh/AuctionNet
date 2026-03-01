@@ -47,12 +47,14 @@ class PpoBiddingEnv:
             num_category=6,
             pv_num=1000,
         )
+       
         self.agents = self.bidding_controller.agents
         self.envs = self.bidding_controller.biddingEnv
         self.pv_generator = self.bidding_controller.pvGenerator
 
         self.num_agent = len(self.agents)
         self._reset_episode_state()
+        print(self.agents)
 
     # ------------------------------------------------------------------
     # Public interface
