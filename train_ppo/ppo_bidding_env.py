@@ -3,9 +3,16 @@ import numpy as np
 from typing import Tuple, Optional, List
 from run.run_test import get_winner, adjust_over_cost
 from simul_bidding_env.Controller.Controller import Controller
-from simul_bidding_env.strategy.pid_bidding_strategy import PidBiddingStrategy
 # Added import to identify target competitors
+from simul_bidding_env.strategy.pid_bidding_strategy import PidBiddingStrategy
+from simul_bidding_env.strategy.onlinelp_bidding_strategy import OnlineLpBiddingStrategy
+from simul_bidding_env.strategy.bc_bidding_strategy import BcBiddingStrategy
+from simul_bidding_env.strategy.mbrl_combomicro_bidding_strategy import MbrlComboMicroBiddingStrategy
+from simul_bidding_env.strategy.bcq_bidding_strategy import BcqBiddingStrategy
+from simul_bidding_env.strategy.cql_bidding_strategy import CqlBiddingStrategy
+from simul_bidding_env.strategy.td3_bc_bidding_strategy import TD3_BCBiddingStrategy
 from simul_bidding_env.strategy.iql_bidding_strategy import IqlBiddingStrategy
+from simul_bidding_env.strategy.mbrl_mopo_bidding_strategy import MbrlMopoBiddingStrategy
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -70,7 +77,7 @@ class PpoBiddingEnv:
             if i == self.player_index:
                 continue
             # Identify agents by their specific class type
-            if isinstance(agent, IqlBiddingStrategy):
+            if isinstance(agent, OnlineLpBiddingStrategy):# or isinstance(agent, BcqBiddingStrategy) or isinstance(agent, MbrlMopoBiddingStrategy) or isinstance(agent, OnlineLpBiddingStrategy) or isinstance(agent, TD3_BCBiddingStrategy) or isinstance(agent, CqlBiddingStrategy) or isinstance(agent, BcBiddingStrategy) or isinstance(agent, MbrlComboMicroBiddingStrategy):
                 indices.append(i)
         
         # Fallback if no agents match to avoid an empty auction
