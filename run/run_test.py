@@ -11,7 +11,7 @@ import psutil
 from simul_bidding_env.Tracker.BiddingTracker import BiddingTracker
 from simul_bidding_env.Tracker.PlayerAnalysis import PlayerAnalysis
 from simul_bidding_env.Controller.Controller import Controller
-from collections import Iterable
+# from collections import Iterable
 import logging
 # Configure logging
 logging.basicConfig(level=logging.INFO)

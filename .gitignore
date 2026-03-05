@@ -6,3 +6,4 @@
 /strategy_train_env/data/
 /data/
 /strategy_train_env/saved_model/
+*.DS_Store
