@@ -77,7 +77,7 @@ class PpoBiddingEnv:
             if i == self.player_index:
                 continue
             # Identify agents by their specific class type
-            if isinstance(agent, OnlineLpBiddingStrategy):# or isinstance(agent, OnlineLpBiddingStrategy): #or isinstance(agent, MbrlMopoBiddingStrategy) or isinstance(agent, OnlineLpBiddingStrategy) or isinstance(agent, TD3_BCBiddingStrategy) or isinstance(agent, CqlBiddingStrategy) or isinstance(agent, BcBiddingStrategy) or isinstance(agent, MbrlComboMicroBiddingStrategy):
+            if isinstance(agent, IqlBiddingStrategy):# or isinstance(agent, OnlineLpBiddingStrategy): #or isinstance(agent, MbrlMopoBiddingStrategy) or isinstance(agent, OnlineLpBiddingStrategy) or isinstance(agent, TD3_BCBiddingStrategy) or isinstance(agent, CqlBiddingStrategy) or isinstance(agent, BcBiddingStrategy) or isinstance(agent, MbrlComboMicroBiddingStrategy):
                 indices.append(i)
         
         # Fallback if no agents match to avoid an empty auction
