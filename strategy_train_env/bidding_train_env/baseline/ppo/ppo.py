@@ -170,7 +170,7 @@ class PPO:
         update_freq: int = 4,
         max_ep_len: int = 48,
         cpa_penalty_coef: float = 0.0,
-        save_path: str = "strategy_train_env/saved_model/ppo_against_iql_and_onlinelp_1e6",
+        save_path: str = "strategy_train_env/saved_model/ppo_against_iql_1e6",
         exploration_decay: float = 0.995,
     ):
         self.env = env
@@ -490,7 +490,7 @@ if __name__ == "__main__":
         num_batches=100000,
         update_freq=4,
         max_ep_len=48,
-        save_path="saved_model/ppo_against_iql_and_onlinelp_1e6",
+        save_path="saved_model/ppo_against_iql_1e6",
         #"strategy_train_env/saved_model/ppo_against_iql_and_onlinelp_1e7",
     )
     
