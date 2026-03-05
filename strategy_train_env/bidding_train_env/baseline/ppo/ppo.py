@@ -487,7 +487,7 @@ if __name__ == "__main__":
         gamma=0.99,
         eps_clip=0.2,
         batch_size=2000,
-        num_batches=100,
+        num_batches=1000,
         update_freq=4,
         max_ep_len=48,
         save_path="saved_model/ppo",
