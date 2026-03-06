@@ -389,9 +389,9 @@ class TwoAgentPPO:
                 logger.info(f"Exploration std: {current_std:7.4f}")
             
             # Save checkpoints
-            if (batch_idx + 1) % 10 == 0:
-                logger.info(f"\nSaving checkpoint at batch {batch_idx + 1}...")
-                self._save_checkpoint(batch_idx + 1)
+            # if (batch_idx + 1) % 10 == 0:
+            #     logger.info(f"\nSaving checkpoint at batch {batch_idx + 1}...")
+            #     self._save_checkpoint(batch_idx + 1)
         
         # Final save
         self._save_checkpoint("final")
