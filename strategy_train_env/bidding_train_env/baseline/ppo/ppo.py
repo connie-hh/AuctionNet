@@ -36,7 +36,15 @@ class GaussianPolicy(nn.Module):
     Alpha is kept positive via softplus after sampling.
     """
 
-    def __init__(self, state_dim: int, action_dim: int = 1, hidden_dim: int = 128):
+    def __init__(self, state_dim: int, action_dim: int = 1, hidden_dim: int = 128, 
+                 init_alpha: float = 100.0):
+        """
+        Args:
+            state_dim: Dimension of state space
+            action_dim: Dimension of action space (typically 1 for alpha)
+            hidden_dim: Hidden layer size
+            init_alpha: Initial alpha value (default 100, typically set to CPA target)
+        """
         super().__init__()
         self.net = nn.Sequential(
             nn.Linear(state_dim, hidden_dim),
@@ -45,10 +53,13 @@ class GaussianPolicy(nn.Module):
             nn.Tanh(),
         )
         self.mu_head = nn.Linear(hidden_dim, action_dim)
-        # Linda: change bias initialization
-        nn.init.constant_(self.mu_head.bias, 4.5)
-        # self.log_std = nn.Parameter(torch.zeros(action_dim))  # learnable, state-independent
-        # Linda: add exploration bonus
+        
+        # Initialize bias to achieve target initial alpha
+        # Formula: softplus(bias) * 50 ≈ init_alpha
+        # For large values, softplus(x) ≈ x, so bias ≈ init_alpha / 50
+        init_bias = init_alpha / 50.0
+        nn.init.constant_(self.mu_head.bias, init_bias)
+        
         self.log_std = nn.Parameter(torch.ones(action_dim) * 1.0)
 
     def forward(self, state: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -107,32 +118,14 @@ class BaselineNetwork(nn.Module):
         return self.net(observations).squeeze(-1)
 
     def calculate_advantage(self, returns: np.ndarray, observations: np.ndarray) -> np.ndarray:
-        """
-        Calculate advantages as returns - baseline.
-        
-        Args:
-            returns: (batch_size,) array of discounted returns
-            observations: (batch_size, state_dim) array
-            
-        Returns:
-            advantages: (batch_size,) array
-        """
+        """Calculate advantages as returns - baseline."""
         observations = np2torch(observations)
         with torch.no_grad():
             baseline = self.forward(observations).cpu().numpy()
         return returns - baseline
 
     def update_baseline(self, returns: np.ndarray, observations: np.ndarray):
-        """
-        Update baseline network to minimize MSE with returns.
-        
-        Args:
-            returns: (batch_size,) array
-            observations: (batch_size, state_dim) array
-            
-        Returns:
-            loss: scalar baseline loss value
-        """
+        """Update baseline network to minimize MSE with returns."""
         returns = np2torch(returns)
         observations = np2torch(observations)
         
@@ -151,10 +144,6 @@ class BaselineNetwork(nn.Module):
 # ---------------------------------------------------------------------------
 
 class PPO:
-    """
-    PPO agent adapted from the reference implementation.
-    Follows the architecture from the provided PPO code.
-    """
 
     def __init__(
         self,
@@ -172,6 +161,7 @@ class PPO:
         cpa_penalty_coef: float = 0.01,
         save_path: str = "strategy_train_env/saved_model/ppo",
         exploration_decay: float = 0.995,
+        init_alpha: float = None,  # If None, uses agent's CPA
     ):
         self.env = env
         self.state_dim = state_dim
@@ -185,25 +175,23 @@ class PPO:
         self.save_path = save_path
         self.exploration_decay = exploration_decay
 
+        # Determine initial alpha from agent's CPA if not provided
+        if init_alpha is None:
+            init_alpha = env.agents[env.player_index].cpa
+        
         # Initialize policy and baseline
-        self.policy = GaussianPolicy(state_dim, action_dim=1, hidden_dim=hidden_dim)
+        self.policy = GaussianPolicy(state_dim, action_dim=1, hidden_dim=hidden_dim, init_alpha=init_alpha)
         self.baseline_network = BaselineNetwork(state_dim, hidden_dim=hidden_dim, lr=lr_baseline)
         self.optimizer = optim.Adam(self.policy.parameters(), lr=lr_policy)
 
-        self.episode_rewards = []
-        self.batch_rewards = []
+        logger.info(f"Initialized PPO agent:")
+        logger.info(f"  Player index: {env.player_index}")
+        logger.info(f"  Budget: ${env.agents[env.player_index].budget}")
+        logger.info(f"  CPA target: ${env.agents[env.player_index].cpa}")
+        logger.info(f"  Initial alpha: {init_alpha:.1f}")
 
     def sample_path(self, num_episodes: int = None):
-        """
-        Sample paths (trajectories) from the environment.
-        
-        Args:
-            num_episodes: number of episodes to sample. If None, sample until batch_size reached.
-            
-        Returns:
-            paths: list of dicts with keys ['observation', 'action', 'reward', 'old_logprobs']
-            total_rewards: list of total rewards per episode
-        """
+        """Sample trajectories from the environment."""
         episode = 0
         episode_rewards = []
         episode_costs = []
@@ -219,22 +207,18 @@ class PPO:
             for step in range(self.max_ep_len):
                 states.append(state)
                 
-                # Get action and log prob from policy
                 action, old_logprob = self.policy.act(states[-1][None], return_log_prob=True)
-                assert old_logprob.shape == (1,)
-                action, old_logprob = action[0, 0], old_logprob[0]  # scalar action
+                action, old_logprob = action[0, 0], old_logprob[0]
                 
-                # Step environment
                 next_state, reward, done, info = self.env.step(action)
                 
-                # Shape reward with CPA penalty
                 agent = self.env.agents[self.env.player_index]
                 shaped_reward = self._shape_reward(reward, info["cost"], agent.cpa)
                 
                 actions.append(action)
                 old_logprobs.append(old_logprob)
                 rewards.append(shaped_reward)
-                episode_reward += reward  # track raw reward for logging
+                episode_reward += reward
                 episode_cost += info["cost"]
                 
                 state = next_state
@@ -243,7 +227,6 @@ class PPO:
                 if done or step == self.max_ep_len - 1:
                     episode_rewards.append(episode_reward)
                     episode_costs.append(episode_cost)
-                    logger.debug(f"  Episode {episode}: Reward={episode_reward:.2f}, Cost={episode_cost:.2f}, Steps={step+1}")
                     break
                 if (not num_episodes) and t == self.batch_size:
                     break
@@ -263,15 +246,7 @@ class PPO:
         return paths, episode_rewards, episode_costs
 
     def get_returns(self, paths: List[dict]) -> np.ndarray:
-        """
-        Compute discounted returns for each timestep.
-        
-        Args:
-            paths: list of path dicts
-            
-        Returns:
-            all_returns: concatenated array of returns for all paths
-        """
+        """Compute discounted returns."""
         all_returns = []
         for path in paths:
             rewards = path["reward"]
@@ -286,40 +261,21 @@ class PPO:
         
         return np.concatenate(all_returns)
 
-    def calculate_advantage(self, returns: np.ndarray, observations: np.ndarray) -> np.ndarray:
-        """Calculate advantages using baseline network."""
-        return self.baseline_network.calculate_advantage(returns, observations)
-
-    def update_policy(self, observations: np.ndarray, actions: np.ndarray, 
-                     advantages: np.ndarray, old_logprobs: np.ndarray):
-        """
-        Perform one PPO update using clipped objective.
-        
-        Args:
-            observations: (batch_size, state_dim)
-            actions: (batch_size,)
-            advantages: (batch_size,)
-            old_logprobs: (batch_size,)
-            
-        Returns:
-            loss: scalar policy loss value
-        """
+    def update_policy(self, observations, actions, advantages, old_logprobs):
+        """PPO policy update with clipped objective."""
         observations = np2torch(observations)
-        actions = np2torch(actions).unsqueeze(-1)  # (batch_size, 1)
+        actions = np2torch(actions).unsqueeze(-1)
         advantages = np2torch(advantages)
         old_logprobs = np2torch(old_logprobs)
 
-        # Compute new log probs
         action_dist = self.policy.action_distribution(observations)
         new_logprobs = action_dist.log_prob(actions).squeeze(-1)
         
-        # PPO clipped objective
         ratio = torch.exp(new_logprobs - old_logprobs)
         surr1 = ratio * advantages
         surr2 = torch.clamp(ratio, 1 - self.eps_clip, 1 + self.eps_clip) * advantages
         loss = -torch.min(surr1, surr2).mean()
         
-        # Update
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
@@ -327,128 +283,58 @@ class PPO:
         return loss.item()
 
     def train(self):
-        """Main training loop following reference implementation structure."""
+        """Main training loop."""
         os.makedirs(self.save_path, exist_ok=True)
         
-        all_total_rewards = []
-        all_total_costs = []
         averaged_total_rewards = []
         averaged_total_costs = []
 
         logger.info("="*60)
         logger.info("Starting PPO Training")
-        logger.info(f"Total batches: {self.num_batches}")
-        logger.info(f"Batch size: {self.batch_size} timesteps")
-        logger.info(f"Update frequency: {self.update_freq} passes per batch")
-        logger.info(f"Max episode length: {self.max_ep_len}")
-        logger.info(f"Save path: {self.save_path}")
+        logger.info(f"Batches: {self.num_batches}, Batch size: {self.batch_size}")
         logger.info("="*60)
 
         for t in range(self.num_batches):
-            logger.info(f"\n{'='*60}")
-            logger.info(f"BATCH {t+1}/{self.num_batches}")
-            logger.info(f"{'='*60}")
+            logger.info(f"\nBATCH {t+1}/{self.num_batches}")
             
-            # Collect minibatch of samples
-            logger.info("Collecting rollouts...")
             paths, total_rewards, total_costs = self.sample_path()
-            all_total_rewards.extend(total_rewards)
-            all_total_costs.extend(total_costs)
             
-            num_episodes = len(total_rewards)
-            total_timesteps = sum(len(path["observation"]) for path in paths)
-            
-            logger.info(f"Collected {num_episodes} episodes ({total_timesteps} timesteps)")
-            
-            observations = np.concatenate([path["observation"] for path in paths])
-            actions = np.concatenate([path["action"] for path in paths])
-            rewards = np.concatenate([path["reward"] for path in paths])
-            old_logprobs = np.concatenate([path["old_logprobs"] for path in paths])
+            observations = np.concatenate([p["observation"] for p in paths])
+            actions = np.concatenate([p["action"] for p in paths])
+            old_logprobs = np.concatenate([p["old_logprobs"] for p in paths])
 
-            # Compute returns and advantages
             returns = self.get_returns(paths)
-            advantages = self.calculate_advantage(returns, observations)
+            advantages = self.baseline_network.calculate_advantage(returns, observations)
 
-            # Run training operations
-            logger.info(f"Running {self.update_freq} policy update passes...")
-            policy_losses = []
-            baseline_losses = []
-            
-            for k in range(self.update_freq):
-                baseline_loss = self.baseline_network.update_baseline(returns, observations)
-                policy_loss = self.update_policy(observations, actions, advantages, old_logprobs)
-                policy_losses.append(policy_loss)
-                baseline_losses.append(baseline_loss)
-                
-                if k == 0 or (k + 1) % max(1, self.update_freq // 4) == 0:
-                    logger.debug(f"  Update {k+1}/{self.update_freq}: "
-                               f"Policy Loss={policy_loss:.4f}, "
-                               f"Baseline Loss={baseline_loss:.4f}")
+            for _ in range(self.update_freq):
+                self.baseline_network.update_baseline(returns, observations)
+                self.update_policy(observations, actions, advantages, old_logprobs)
 
-            # Compute statistics
             avg_reward = np.mean(total_rewards)
-            std_reward = np.std(total_rewards)
-            sigma_reward = std_reward / np.sqrt(len(total_rewards))
-            
             avg_cost = np.mean(total_costs)
-            std_cost = np.std(total_costs)
-            
-            avg_policy_loss = np.mean(policy_losses)
-            avg_baseline_loss = np.mean(baseline_losses)
-            
             avg_action = np.mean(actions)
-            std_action = np.std(actions)
             
             averaged_total_rewards.append(avg_reward)
             averaged_total_costs.append(avg_cost)
 
-            # Linda: Decay exploration
             with torch.no_grad():
                 self.policy.log_std.data *= self.exploration_decay
                 current_std = self.policy.log_std.exp().item()
             
-            # Logging
-            logger.info(f"\n{'─'*60}")
-            logger.info(f"BATCH {t+1} SUMMARY:")
-            logger.info(f"{'─'*60}")
-            logger.info(f"Episodes:        {num_episodes}")
-            logger.info(f"Total Timesteps: {total_timesteps}")
-            logger.info(f"Reward:          {avg_reward:7.2f} ± {sigma_reward:6.2f} (std: {std_reward:6.2f})")
-            logger.info(f"Cost:            {avg_cost:7.2f} ± {std_cost/np.sqrt(len(total_costs)):6.2f} (std: {std_cost:6.2f})")
-            logger.info(f"Policy Loss:     {avg_policy_loss:7.4f}")
-            logger.info(f"Baseline Loss:   {avg_baseline_loss:7.4f}")
-            logger.info(f"Action (alpha):  {avg_action:7.4f} ± {std_action:6.4f}")
-            logger.info(f"Exploration std: {current_std:7.4f}")
-            logger.info(f"Returns:         mean={np.mean(returns):7.2f}, std={np.std(returns):6.2f}")
-            logger.info(f"Advantages:      mean={np.mean(advantages):7.4f}, std={np.std(advantages):6.4f}")
+            logger.info(f"Reward: {avg_reward:.2f}, Cost: ${avg_cost:.2f}, Alpha: {avg_action:.2f}, Std: {current_std:.4f}")
             
-            # Save checkpoint every 10 batches
             if (t + 1) % 10 == 0:
-                logger.info(f"\nSaving checkpoint at batch {t+1}...")
                 self._save_checkpoint(t + 1)
 
-        # Final save
-        logger.info("\n" + "="*60)
-        logger.info("Training Complete!")
-        logger.info("="*60)
         self._save_checkpoint("final")
-        logger.info(f"Final model saved to {self.save_path}/")
-        
-        # Save reward history
         np.save(os.path.join(self.save_path, "rewards.npy"), averaged_total_rewards)
         np.save(os.path.join(self.save_path, "costs.npy"), averaged_total_costs)
         
-        # Final statistics
-        logger.info(f"\nFinal Statistics:")
-        logger.info(f"  Average Reward (last 10 batches): {np.mean(averaged_total_rewards[-10:]):7.2f}")
-        logger.info(f"  Average Cost (last 10 batches):   {np.mean(averaged_total_costs[-10:]):7.2f}")
-        logger.info(f"  Best Reward:  {np.max(averaged_total_rewards):7.2f} (batch {np.argmax(averaged_total_rewards)+1})")
-        logger.info(f"  Total Episodes Trained: {len(all_total_rewards)}")
-        
+        logger.info("\nTraining Complete!")
         return averaged_total_rewards, averaged_total_costs
 
     def _shape_reward(self, conversions: float, cost: float, cpa_target: float) -> float:
-        """Add CPA-violation penalty to raw conversion reward."""
+        """Reward shaping with CPA penalty."""
         if conversions > 0:
             actual_cpa = cost / conversions
             violation = max(0.0, actual_cpa - cpa_target)
@@ -458,38 +344,21 @@ class PPO:
         return conversions - penalty
 
     def _save_checkpoint(self, tag):
-        """Save policy and baseline network weights."""
-        torch.save(
-            self.policy.state_dict(),
-            os.path.join(self.save_path, f"ppo_policy_{tag}.pt"),
-        )
-        torch.save(
-            self.baseline_network.state_dict(),
-            os.path.join(self.save_path, f"ppo_baseline_{tag}.pt"),
-        )
+        """Save model checkpoints."""
+        torch.save(self.policy.state_dict(), 
+                  os.path.join(self.save_path, f"ppo_policy_{tag}.pt"))
+        torch.save(self.baseline_network.state_dict(),
+                  os.path.join(self.save_path, f"ppo_baseline_{tag}.pt"))
 
-
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    from simul_bidding_env.strategy.pid_bidding_strategy import PidBiddingStrategy
-    
     env = PpoBiddingEnv(player_index=0)
     
     agent = PPO(
         env=env,
         state_dim=16,
         hidden_dim=128,
-        lr_policy=3e-4,
-        lr_baseline=1e-3,
-        gamma=0.99,
-        eps_clip=0.2,
-        batch_size=2000,
         num_batches=100,
-        update_freq=4,
-        max_ep_len=48,
         save_path="saved_model/ppo",
     )
     

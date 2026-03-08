@@ -43,7 +43,7 @@ class PpoBiddingEnv:
             player_index=player_index,
             player_agent=dummy_agent,
             num_tick=48,
-            num_agent_category=4,
+            num_agent_category=8,
             num_category=6,
             pv_num=1000,
         )
