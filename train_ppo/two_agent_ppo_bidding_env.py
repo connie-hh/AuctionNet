@@ -45,15 +45,15 @@ class TwoAgentPpoBiddingEnv:
         # Create 2 agents manually using dummy strategy objects
         # (We only need their budget/cpa/category attributes, not their bidding logic)
         agent0 = PidBiddingStrategy(
-            budget=2900,
+            budget=3000,
             cpa=100,
             category=0,
             name="PPO_Agent_0",
             exp_tempral_ratio=np.ones(48)
         )
         agent1 = PidBiddingStrategy(
-            budget=4350,
-            cpa=70,
+            budget=3000,
+            cpa=100,
             category=0,
             name="PPO_Agent_1",
             exp_tempral_ratio=np.ones(48)
