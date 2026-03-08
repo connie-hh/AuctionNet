@@ -8,122 +8,10 @@ from typing import List, Tuple
 import logging
 
 from train_ppo.two_agent_ppo_bidding_env import TwoAgentPpoBiddingEnv
+from strategy_train_env.bidding_train_env.baseline.ppo.ppo import np2torch, GaussianPolicy, BaselineNetwork
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# Helper functions
-# ---------------------------------------------------------------------------
-
-def np2torch(x, cast_double_to_float=True):
-    """Convert numpy array to torch tensor."""
-    if isinstance(x, np.ndarray):
-        x = torch.from_numpy(x)
-        if cast_double_to_float and x.dtype == torch.float64:
-            x = x.float()
-    return x
-
-
-# ---------------------------------------------------------------------------
-# Policy Network (Gaussian for continuous action)
-# ---------------------------------------------------------------------------
-
-class GaussianPolicy(nn.Module):
-    """
-    Gaussian policy: outputs (mu, log_std) for the alpha action.
-    Alpha is kept positive via softplus after sampling.
-    """
-
-    def __init__(self, state_dim: int, action_dim: int = 1, hidden_dim: int = 128):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(state_dim, hidden_dim),
-            nn.Tanh(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.Tanh(),
-        )
-        self.mu_head = nn.Linear(hidden_dim, action_dim)
-        nn.init.constant_(self.mu_head.bias, 4.5)
-        self.log_std = nn.Parameter(torch.ones(action_dim) * 1.0)
-
-    def forward(self, state: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        x = self.net(state)
-        mu = torch.nn.functional.softplus(self.mu_head(x)) * 50
-        std = self.log_std.exp().expand_as(mu)
-        return mu, std
-
-    def action_distribution(self, observations: torch.Tensor):
-        """Returns a torch.distributions.Normal object."""
-        mu, std = self.forward(observations)
-        return Normal(mu, std)
-
-    def act(self, observations: np.ndarray, return_log_prob: bool = False):
-        """
-        Sample action from policy.
-        
-        Args:
-            observations: (batch_size, state_dim) numpy array
-            return_log_prob: if True, also return log probability
-            
-        Returns:
-            actions: (batch_size, action_dim) numpy array
-            log_probs: (batch_size,) numpy array (if return_log_prob=True)
-        """
-        observations = np2torch(observations)
-        dist = self.action_distribution(observations)
-        actions = dist.sample()
-        actions = torch.clamp(actions, min=1e-3)
-        
-        if return_log_prob:
-            log_probs = dist.log_prob(actions).sum(dim=-1)
-            return actions.detach().cpu().numpy(), log_probs.detach().cpu().numpy()
-        return actions.detach().cpu().numpy()
-
-
-# ---------------------------------------------------------------------------
-# Baseline (Value) Network
-# ---------------------------------------------------------------------------
-
-class BaselineNetwork(nn.Module):
-    """Critic network that estimates V(s)."""
-
-    def __init__(self, state_dim: int, hidden_dim: int = 128, lr: float = 1e-3):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(state_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, 1),
-        )
-        self.optimizer = optim.Adam(self.parameters(), lr=lr)
-
-    def forward(self, observations: torch.Tensor) -> torch.Tensor:
-        return self.net(observations).squeeze(-1)
-
-    def calculate_advantage(self, returns: np.ndarray, observations: np.ndarray) -> np.ndarray:
-        """Calculate advantages as returns - baseline."""
-        observations = np2torch(observations)
-        with torch.no_grad():
-            baseline = self.forward(observations).cpu().numpy()
-        return returns - baseline
-
-    def update_baseline(self, returns: np.ndarray, observations: np.ndarray):
-        """Update baseline network to minimize MSE with returns."""
-        returns = np2torch(returns)
-        observations = np2torch(observations)
-        
-        baseline_pred = self.forward(observations)
-        loss = nn.functional.mse_loss(baseline_pred, returns)
-        
-        self.optimizer.zero_grad()
-        loss.backward()
-        self.optimizer.step()
-        
-        return loss.item()
-
 
 # ---------------------------------------------------------------------------
 # Two-Agent PPO Trainer
@@ -389,9 +277,9 @@ class TwoAgentPPO:
                 logger.info(f"Exploration std: {current_std:7.4f}")
             
             # Save checkpoints
-            # if (batch_idx + 1) % 10 == 0:
-            #     logger.info(f"\nSaving checkpoint at batch {batch_idx + 1}...")
-            #     self._save_checkpoint(batch_idx + 1)
+            if (batch_idx + 1) % 100 == 0:
+                logger.info(f"\nSaving checkpoint at batch {batch_idx + 1}...")
+                self._save_checkpoint(batch_idx + 1)
         
         # Final save
         self._save_checkpoint("final")
