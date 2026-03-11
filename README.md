@@ -84,7 +84,6 @@ Use the PpoBiddingStrategy as the PlayerBiddingStrategy for evaluation.
 ```
 strategy_train_env/bidding_train_env/strategy/__init__.py
 from .ppo_bidding_strategy import PpoBiddingStrategy as PlayerBiddingStrategy
-
 ```
 
 Set up the hyperparameters for the online evaluation process.
@@ -94,7 +93,6 @@ config/test.gin
 
 Run online evaluation.
 ```bash
-# Return to the root directory
 $ python main_test.py
 ```
 
