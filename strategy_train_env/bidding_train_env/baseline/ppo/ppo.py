@@ -154,9 +154,9 @@ class PPO:
         lr_baseline: float = 1e-3,
         gamma: float = 0.99,
         eps_clip: float = 0.2,
-        batch_size: int = 2000,
+        batch_size: int = 2016, # 42 * max_ep_len
         num_batches: int = 100,
-        update_freq: int = 4,
+        update_freq: int = 8,
         max_ep_len: int = 48,
         cpa_penalty_coef: float = 0.01,
         save_path: str = "strategy_train_env/saved_model/ppo",
@@ -204,6 +204,9 @@ class PPO:
             episode_reward = 0
             episode_cost = 0
 
+            cumulative_conversions = 0
+            cumulative_cost = 0
+
             for step in range(self.max_ep_len):
                 states.append(state)
                 
@@ -211,9 +214,19 @@ class PPO:
                 action, old_logprob = action[0, 0], old_logprob[0]
                 
                 next_state, reward, done, info = self.env.step(action)
-                
+
+                # Apply CPA penalty by estimating current action's impact on CPA
+                cumulative_conversions += reward
+                cumulative_cost += info["cost"]
                 agent = self.env.agents[self.env.player_index]
-                shaped_reward = self._shape_reward(reward, info["cost"], agent.cpa)
+                # shaped_reward = self._shape_reward(reward, info["cost"], agent.cpa)
+                if cumulative_conversions > 0:
+                    cumulative_cpa = cumulative_cost / cumulative_conversions
+                    violation = max(0.0, cumulative_cpa - agent.cpa)
+                    penalty = self.cpa_penalty_coef * violation
+                else:
+                    penalty = 0
+                shaped_reward = reward - penalty
                 
                 actions.append(action)
                 old_logprobs.append(old_logprob)
@@ -288,6 +301,7 @@ class PPO:
         
         averaged_total_rewards = []
         averaged_total_costs = []
+        averaged_total_actions = []
 
         logger.info("="*60)
         logger.info("Starting PPO Training")
@@ -316,6 +330,7 @@ class PPO:
             
             averaged_total_rewards.append(avg_reward)
             averaged_total_costs.append(avg_cost)
+            averaged_total_actions.append(avg_action)
 
             with torch.no_grad():
                 self.policy.log_std.data *= self.exploration_decay
@@ -329,19 +344,20 @@ class PPO:
         self._save_checkpoint("final")
         np.save(os.path.join(self.save_path, "rewards.npy"), averaged_total_rewards)
         np.save(os.path.join(self.save_path, "costs.npy"), averaged_total_costs)
+        np.save(os.path.join(self.save_path, "alphas.npy"), averaged_total_actions)
         
         logger.info("\nTraining Complete!")
         return averaged_total_rewards, averaged_total_costs
 
-    def _shape_reward(self, conversions: float, cost: float, cpa_target: float) -> float:
-        """Reward shaping with CPA penalty."""
-        if conversions > 0:
-            actual_cpa = cost / conversions
-            violation = max(0.0, actual_cpa - cpa_target)
-            penalty = self.cpa_penalty_coef * violation
-        else:
-            penalty = self.cpa_penalty_coef * cost
-        return conversions - penalty
+    # def _shape_reward(self, conversions: float, cost: float, cpa_target: float) -> float:
+    #     """Reward shaping with CPA penalty."""
+    #     if conversions > 0:
+    #         actual_cpa = cost / conversions
+    #         violation = max(0.0, actual_cpa - cpa_target)
+    #         penalty = self.cpa_penalty_coef * violation
+    #     else:
+    #         penalty = self.cpa_penalty_coef * cost
+    #     return conversions - penalty
 
     def _save_checkpoint(self, tag):
         """Save model checkpoints."""
