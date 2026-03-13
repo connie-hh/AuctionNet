@@ -144,6 +144,7 @@ class BaselineNetwork(nn.Module):
 # ---------------------------------------------------------------------------
 
 class PPO:
+    """PPO agent with checkpoint loading support."""
 
     def __init__(
         self,
@@ -161,7 +162,8 @@ class PPO:
         cpa_penalty_coef: float = 0.01,
         save_path: str = "strategy_train_env/saved_model/ppo",
         exploration_decay: float = 0.995,
-        init_alpha: float = None,  # If None, uses agent's CPA
+        init_alpha: float = None,
+        load_checkpoint: str = None,  # Path to checkpoint (e.g., "saved_model/ppo/ppo_policy_50.pt")
     ):
         self.env = env
         self.state_dim = state_dim
@@ -184,11 +186,65 @@ class PPO:
         self.baseline_network = BaselineNetwork(state_dim, hidden_dim=hidden_dim, lr=lr_baseline)
         self.optimizer = optim.Adam(self.policy.parameters(), lr=lr_policy)
 
+        # Load checkpoint if provided
+        self.start_batch = 0
+        if load_checkpoint is not None:
+            self.start_batch = self._load_checkpoint(load_checkpoint)
+
         logger.info(f"Initialized PPO agent:")
         logger.info(f"  Player index: {env.player_index}")
         logger.info(f"  Budget: ${env.agents[env.player_index].budget}")
         logger.info(f"  CPA target: ${env.agents[env.player_index].cpa}")
         logger.info(f"  Initial alpha: {init_alpha:.1f}")
+        if load_checkpoint:
+            logger.info(f"  Loaded checkpoint from: {load_checkpoint}")
+            logger.info(f"  Resuming from batch: {self.start_batch}")
+
+    def _load_checkpoint(self, checkpoint_path: str) -> int:
+        """
+        Load policy and baseline from checkpoint.
+        
+        Args:
+            checkpoint_path: Path to policy checkpoint file
+            
+        Returns:
+            Batch number to resume from (extracted from filename)
+        """
+        if not os.path.exists(checkpoint_path):
+            logger.warning(f"Checkpoint not found: {checkpoint_path}")
+            return 0
+        
+        # Load policy
+        self.policy.load_state_dict(torch.load(checkpoint_path, map_location='cpu'))
+        logger.info(f"Loaded policy from {checkpoint_path}")
+        
+        # Try to load corresponding baseline
+        baseline_path = checkpoint_path.replace("policy", "baseline")
+        if os.path.exists(baseline_path):
+            self.baseline_network.load_state_dict(torch.load(baseline_path, map_location='cpu'))
+            logger.info(f"Loaded baseline from {baseline_path}")
+        else:
+            logger.warning(f"Baseline checkpoint not found: {baseline_path}")
+        
+        # Extract batch number from filename (e.g., "ppo_policy_50.pt" -> 50)
+        import re
+        match = re.search(r'_(\d+)\.pt$', checkpoint_path)
+        if match:
+            batch_num = int(match.group(1))
+            for name, attr in [("rewards", "averaged_total_rewards"), 
+                   ("costs", "averaged_total_costs"), 
+                   ("alphas", "averaged_total_actions")]:
+                npy_path = os.path.join(self.save_path, f"{name}.npy")
+                if os.path.exists(npy_path):
+                    setattr(self, attr, list(np.load(npy_path)))
+                    logger.info(f"Loaded {name} history ({len(getattr(self, attr))} entries)")
+                else:
+                    setattr(self, attr, [])
+            return batch_num
+        elif 'final' in checkpoint_path:
+            logger.warning("Loaded 'final' checkpoint - cannot resume training")
+            return 0
+        return 0
 
     def sample_path(self, num_episodes: int = None):
         """Sample trajectories from the environment."""
@@ -204,7 +260,7 @@ class PPO:
             episode_reward = 0
             episode_cost = 0
 
-            cumulative_conversions = 0
+            cumulative_value = 0
             cumulative_cost = 0
 
             for step in range(self.max_ep_len):
@@ -212,21 +268,36 @@ class PPO:
                 
                 action, old_logprob = self.policy.act(states[-1][None], return_log_prob=True)
                 action, old_logprob = action[0, 0], old_logprob[0]
-                
+
+                # Store state before this timestep
+                cumulative_value_before = cumulative_value
+                cumulative_cost_before = cumulative_cost
+
+                # Step environment and update cumulative
                 next_state, reward, done, info = self.env.step(action)
 
-                # Apply CPA penalty by estimating current action's impact on CPA
-                cumulative_conversions += reward
-                cumulative_cost += info["cost"]
+                if reward > 0:
+                    cumulative_value += info["value"]
+                    cumulative_cost += info["cost"]
+
+                # Calculate CPAs
+                cpa_before = cumulative_cost_before / cumulative_value_before if cumulative_value_before > 0 else 0
+                cpa_after = cumulative_cost / cumulative_value if cumulative_value > 0 else 0
+
                 agent = self.env.agents[self.env.player_index]
-                # shaped_reward = self._shape_reward(reward, info["cost"], agent.cpa)
-                if cumulative_conversions > 0:
-                    cumulative_cpa = cumulative_cost / cumulative_conversions
-                    violation = max(0.0, cumulative_cpa - agent.cpa)
+                # print(f'Current action cost: {info["cost"]}; value: {info["value"]}; cpa: {info["cost"] / info["value"]}')
+
+                # Penalty: only if over target AND didn't improve
+                if cpa_after > agent.cpa and cpa_after > cpa_before:
+                    violation = cpa_after - agent.cpa
                     penalty = self.cpa_penalty_coef * violation
+                    # print(f'Current action cost: {info["cost"]}; value: {info["value"]}; cpa: {info["cost"] / info["value"]}')
+                    # print(f'CPA before: {cpa_before}; CPA after: {cpa_after}; CPA penalty: {penalty}')
                 else:
                     penalty = 0
+
                 shaped_reward = reward - penalty
+                # print(f'Shaped reward: {reward - penalty}')
                 
                 actions.append(action)
                 old_logprobs.append(old_logprob)
@@ -299,16 +370,24 @@ class PPO:
         """Main training loop."""
         os.makedirs(self.save_path, exist_ok=True)
         
-        averaged_total_rewards = []
-        averaged_total_costs = []
-        averaged_total_actions = []
+        if not hasattr(self, 'averaged_total_rewards'):
+            averaged_total_rewards = []
+            averaged_total_costs = []
+            averaged_total_actions = []
+        else:
+            averaged_total_rewards = self.averaged_total_rewards
+            averaged_total_costs = self.averaged_total_costs
+            averaged_total_actions = self.averaged_total_actions
+        print(averaged_total_rewards)
 
         logger.info("="*60)
         logger.info("Starting PPO Training")
         logger.info(f"Batches: {self.num_batches}, Batch size: {self.batch_size}")
+        if self.start_batch > 0:
+            logger.info(f"Resuming from batch: {self.start_batch}")
         logger.info("="*60)
 
-        for t in range(self.num_batches):
+        for t in range(self.start_batch, self.num_batches):
             logger.info(f"\nBATCH {t+1}/{self.num_batches}")
             
             paths, total_rewards, total_costs = self.sample_path()
@@ -370,12 +449,22 @@ class PPO:
 if __name__ == "__main__":
     env = PpoBiddingEnv(player_index=0)
     
+    # Resume from checkpoint
     agent = PPO(
         env=env,
-        state_dim=16,
         hidden_dim=128,
-        num_batches=100,
-        save_path="saved_model/ppo",
+        load_checkpoint="saved_model_no_cpa_v2/ppo/ppo_policy_300.pt",
+        num_batches=500,
+        save_path="saved_model_no_cpa_v2/ppo"
     )
+    
+    # # Train from scratch
+    # agent = PPO(
+    #     env=env,
+    #     state_dim=16,
+    #     hidden_dim=128,
+    #     num_batches=300,
+    #     save_path="saved_model_no_cpa_v2/ppo",
+    # )
     
     agent.train()

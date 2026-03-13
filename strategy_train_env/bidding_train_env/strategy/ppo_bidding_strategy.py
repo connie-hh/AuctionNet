@@ -24,7 +24,7 @@ class PpoBiddingStrategy(BaseBiddingStrategy):
             dir_name = os.path.dirname(dir_name)
             model_path = os.path.join(dir_name, "saved_model", "ppo", "ppo_policy_final.pt")
         
-        self.policy = self._load_policy(model_path)
+        self.policy = self._load_policy("saved_model_no_cpa_v2/ppo/ppo_policy_final.pt")
         self.policy.eval()  # Set to evaluation mode
         
         # State tracking for feature computation

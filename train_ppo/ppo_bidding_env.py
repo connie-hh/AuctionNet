@@ -121,6 +121,7 @@ class PpoBiddingEnv:
         # --- Update budgets ----------------------------------------------
         real_cost = (cost_pit * is_exposed_pit)          # (num_agent, num_pv)
         cost_per_agent = real_cost.sum(axis=1)
+        value_per_agent = (conversion_action_pit * pv_values.T).sum(axis=1)
         #OOPS. It was supposed to be the real value, not the pv_values (those are the expected values, not the actual outcomes). 
         # The reward is just the number of conversions, which is the sum of conversion_action_pit for the player.SMH sorry..
         reward_per_agent = conversion_action_pit.sum(axis=1)              # (num_agent,)
@@ -139,6 +140,7 @@ class PpoBiddingEnv:
         # --- Tick bookkeeping -------------------------------------------
         player_cost = cost_per_agent[self.player_index]
         player_reward = float(reward_per_agent[self.player_index])
+        player_value = value_per_agent[self.player_index]
         player_budget = self.agents[self.player_index].remaining_budget
         
         # Diagnostic logging for first tick
@@ -164,6 +166,7 @@ class PpoBiddingEnv:
         info = {
             "tick": tick,
             "cost": player_cost,
+            "value": player_value,
             "remaining_budget": player_budget,
             "cumulative_reward": self.cumulative_reward,
             "cumulative_cost": self.cumulative_cost,
