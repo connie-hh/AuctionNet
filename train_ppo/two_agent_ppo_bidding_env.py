@@ -43,7 +43,6 @@ class TwoAgentPpoBiddingEnv:
         self.episode = episode
         
         # Create 2 agents manually using dummy strategy objects
-        # (We only need their budget/cpa/category attributes, not their bidding logic)
         agent0 = PidBiddingStrategy(
             budget=3000,
             cpa=100,
@@ -135,8 +134,8 @@ class TwoAgentPpoBiddingEnv:
             infos: [info_agent0, info_agent1] - diagnostic dicts
         """
         tick = self.tick_index
-        pv_values_original = self.pv_generator.pv_values[tick]        # (num_pv, 2) - keep for logging
-        pvalue_sigmas_original = self.pv_generator.pValueSigmas[tick] # (num_pv, 2) - keep for logging
+        pv_values_original = self.pv_generator.pv_values[tick]        # (num_pv, 2)
+        pvalue_sigmas_original = self.pv_generator.pValueSigmas[tick] # (num_pv, 2)
         
         pv_values = pv_values_original.copy()
         pvalue_sigmas = pvalue_sigmas_original.copy()
@@ -216,7 +215,6 @@ class TwoAgentPpoBiddingEnv:
                 logger.info(f"    Cost: {cost_per_agent[i]:.2f}")
                 logger.info(f"    Remaining budget: {self.agents[i].remaining_budget:.2f}")
 
-        # Increment tick
         self.tick_index += 1
 
         # Build return values for each agent
@@ -226,16 +224,13 @@ class TwoAgentPpoBiddingEnv:
         infos = []
 
         for i in range(2):
-            # Check if done
             done = (
                 self.tick_index >= self.NUM_TICK
                 or self.agents[i].remaining_budget < self.envs.min_remaining_budget
             )
             
-            # Build next state
             next_state = self._build_state(agent_idx=i) if not done else np.zeros(self.STATE_DIM)
             
-            # Build info dict
             info = {
                 "tick": tick,
                 "cost": cost_per_agent[i],
@@ -251,10 +246,8 @@ class TwoAgentPpoBiddingEnv:
 
         return next_states, rewards, dones, infos
 
-    # ------------------------------------------------------------------
     # Private helpers
-    # ------------------------------------------------------------------
-
+    
     def _reset_episode_state(self) -> None:
         """Clear per-episode tracking variables for both agents."""
         self.tick_index = 0
@@ -424,21 +417,3 @@ class TwoAgentPpoBiddingEnv:
         ], dtype=np.float32)
 
         return state
-
-
-# Test the environment
-if __name__ == "__main__":
-    env = TwoAgentPpoBiddingEnv()
-    
-    print("\nTesting environment...")
-    states = env.reset()
-    print(f"Reset returned {len(states)} states with shapes: {states[0].shape}, {states[1].shape}")
-    
-    # Test one step with different actions
-    actions = [100.0, 200.0]  # Agent 0 conservative, Agent 1 aggressive
-    next_states, rewards, dones, infos = env.step(actions)
-    
-    print(f"\nAfter one step:")
-    print(f"  Agent 0: Reward={rewards[0]:.2f}, Cost={infos[0]['cost']:.2f}, Budget={infos[0]['remaining_budget']:.2f}")
-    print(f"  Agent 1: Reward={rewards[1]:.2f}, Cost={infos[1]['cost']:.2f}, Budget={infos[1]['remaining_budget']:.2f}")
-    print(f"  Dones: {dones}")

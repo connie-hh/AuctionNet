@@ -13,10 +13,6 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Helper functions
-# ---------------------------------------------------------------------------
-
 def np2torch(x, cast_double_to_float=True):
     """Convert numpy array to torch tensor."""
     if isinstance(x, np.ndarray):
@@ -25,10 +21,6 @@ def np2torch(x, cast_double_to_float=True):
             x = x.float()
     return x
 
-
-# ---------------------------------------------------------------------------
-# Policy Network (Gaussian for continuous action)
-# ---------------------------------------------------------------------------
 
 class GaussianPolicy(nn.Module):
     """
@@ -41,9 +33,9 @@ class GaussianPolicy(nn.Module):
         """
         Args:
             state_dim: Dimension of state space
-            action_dim: Dimension of action space (typically 1 for alpha)
+            action_dim: Dimension of action space (1 for alpha)
             hidden_dim: Hidden layer size
-            init_alpha: Initial alpha value (default 100, typically set to CPA target)
+            init_alpha: Initial alpha value (default 100, set to CPA target)
         """
         super().__init__()
         self.net = nn.Sequential(
@@ -96,10 +88,6 @@ class GaussianPolicy(nn.Module):
         return actions.detach().cpu().numpy()
 
 
-# ---------------------------------------------------------------------------
-# Baseline (Value) Network
-# ---------------------------------------------------------------------------
-
 class BaselineNetwork(nn.Module):
     """Critic network that estimates V(s)."""
 
@@ -139,10 +127,6 @@ class BaselineNetwork(nn.Module):
         return loss.item()
 
 
-# ---------------------------------------------------------------------------
-# PPO Agent
-# ---------------------------------------------------------------------------
-
 class PPO:
     """PPO agent with checkpoint loading support."""
 
@@ -159,7 +143,7 @@ class PPO:
         num_batches: int = 100,
         update_freq: int = 8,
         max_ep_len: int = 48,
-        cpa_penalty_coef: float = 0.01,
+        cpa_penalty_coef: float = 0.005,
         save_path: str = "strategy_train_env/saved_model/ppo",
         exploration_decay: float = 0.995,
         init_alpha: float = None,
@@ -285,19 +269,15 @@ class PPO:
                 cpa_after = cumulative_cost / cumulative_value if cumulative_value > 0 else 0
 
                 agent = self.env.agents[self.env.player_index]
-                # print(f'Current action cost: {info["cost"]}; value: {info["value"]}; cpa: {info["cost"] / info["value"]}')
 
                 # Penalty: only if over target AND didn't improve
                 if cpa_after > agent.cpa and cpa_after > cpa_before:
                     violation = cpa_after - agent.cpa
                     penalty = self.cpa_penalty_coef * violation
-                    # print(f'Current action cost: {info["cost"]}; value: {info["value"]}; cpa: {info["cost"] / info["value"]}')
-                    # print(f'CPA before: {cpa_before}; CPA after: {cpa_after}; CPA penalty: {penalty}')
                 else:
                     penalty = 0
 
                 shaped_reward = reward - penalty
-                # print(f'Shaped reward: {reward - penalty}')
                 
                 actions.append(action)
                 old_logprobs.append(old_logprob)
@@ -378,7 +358,6 @@ class PPO:
             averaged_total_rewards = self.averaged_total_rewards
             averaged_total_costs = self.averaged_total_costs
             averaged_total_actions = self.averaged_total_actions
-        print(averaged_total_rewards)
 
         logger.info("="*60)
         logger.info("Starting PPO Training")
@@ -428,16 +407,6 @@ class PPO:
         logger.info("\nTraining Complete!")
         return averaged_total_rewards, averaged_total_costs
 
-    # def _shape_reward(self, conversions: float, cost: float, cpa_target: float) -> float:
-    #     """Reward shaping with CPA penalty."""
-    #     if conversions > 0:
-    #         actual_cpa = cost / conversions
-    #         violation = max(0.0, actual_cpa - cpa_target)
-    #         penalty = self.cpa_penalty_coef * violation
-    #     else:
-    #         penalty = self.cpa_penalty_coef * cost
-    #     return conversions - penalty
-
     def _save_checkpoint(self, tag):
         """Save model checkpoints."""
         torch.save(self.policy.state_dict(), 
@@ -449,22 +418,22 @@ class PPO:
 if __name__ == "__main__":
     env = PpoBiddingEnv(player_index=0)
     
-    # Resume from checkpoint
-    agent = PPO(
-        env=env,
-        hidden_dim=128,
-        load_checkpoint="saved_model_no_cpa_v2/ppo/ppo_policy_300.pt",
-        num_batches=500,
-        save_path="saved_model_no_cpa_v2/ppo"
-    )
-    
-    # # Train from scratch
+    # # Resume from checkpoint
     # agent = PPO(
     #     env=env,
-    #     state_dim=16,
     #     hidden_dim=128,
-    #     num_batches=300,
-    #     save_path="saved_model_no_cpa_v2/ppo",
+    #     load_checkpoint="saved_model_cpa_0_01_v2/ppo/ppo_policy_300.pt",
+    #     num_batches=500,
+    #     save_path="saved_model_cpa_0_01_v2/ppo"
     # )
+    
+    # Train from scratch
+    agent = PPO(
+        env=env,
+        state_dim=16,
+        hidden_dim=128,
+        num_batches=300,
+        save_path="saved_model_cpa_0_005_v2/ppo",
+    )
     
     agent.train()

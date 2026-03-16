@@ -56,9 +56,7 @@ class PpoBiddingEnv:
         self._reset_episode_state()
         print(self.agents)
 
-    # ------------------------------------------------------------------
     # Public interface
-    # ------------------------------------------------------------------
 
     def reset(self, episode: Optional[int] = None) -> np.ndarray:
         """
@@ -96,7 +94,7 @@ class PpoBiddingEnv:
         pv_values = self.pv_generator.pv_values[tick]        # (num_pv, num_agent)
         pvalue_sigmas = self.pv_generator.pValueSigmas[tick] # (num_pv, num_agent)
 
-        # --- Build bids for all agents -----------------------------------
+        # Build bids for all agents
         bids = self._collect_bids(pv_values, pvalue_sigmas, action, tick)
         bids = np.array(bids).T   # (num_pv, num_agent)
         bids[bids < 0] = 0
@@ -113,31 +111,28 @@ class PpoBiddingEnv:
             logger.info(f"  Reserve price: {self.envs.reserve_pv_price:.6f}")
             logger.info(f"  Bids above reserve: {(player_bids > self.envs.reserve_pv_price).sum()}/{len(player_bids)}")
 
-        # --- Overcost adjustment loop (mirrors run_test.py) --------------
+        # Overcost adjustment loop (mirrors run_test.py)
         remaining_budgets = np.array([a.remaining_budget for a in self.agents])
         bids, xi_pit, slot_pit, cost_pit, is_exposed_pit, conversion_action_pit, lwc_pit = \
             self._run_auction_with_overcost_guard(pv_values, pvalue_sigmas, bids, remaining_budgets)
 
-        # --- Update budgets ----------------------------------------------
+        # Update budgets
         real_cost = (cost_pit * is_exposed_pit)          # (num_agent, num_pv)
         cost_per_agent = real_cost.sum(axis=1)
         value_per_agent = (conversion_action_pit * pv_values.T).sum(axis=1)
-        #OOPS. It was supposed to be the real value, not the pv_values (those are the expected values, not the actual outcomes). 
-        # The reward is just the number of conversions, which is the sum of conversion_action_pit for the player.SMH sorry..
-        reward_per_agent = conversion_action_pit.sum(axis=1)              # (num_agent,)
-       # reward_per_agent = (xi_pit * pv_values.T).sum(axis=1) # Linda: weight this by the value, potentially also add the log
-
+        # The reward is just the number of conversions, which is the sum of conversion_action_pit for the player
+        reward_per_agent = conversion_action_pit.sum(axis=1)
         for i, agent in enumerate(self.agents):
             agent.remaining_budget -= cost_per_agent[i]
 
-        # --- Update history arrays ---------------------------------------
+        # Update history arrays
         self._update_history(
             pv_values, pvalue_sigmas, bids,
             xi_pit, slot_pit, cost_pit,
             is_exposed_pit, conversion_action_pit, lwc_pit
         )
 
-        # --- Tick bookkeeping -------------------------------------------
+        # Tick bookkeeping
         player_cost = cost_per_agent[self.player_index]
         player_reward = float(reward_per_agent[self.player_index])
         player_value = value_per_agent[self.player_index]
@@ -175,9 +170,7 @@ class PpoBiddingEnv:
 
         return next_state, player_reward, done, info
 
-    # ------------------------------------------------------------------
     # Private helpers
-    # ------------------------------------------------------------------
 
     def _reset_episode_state(self) -> None:
         """Clears per-episode tracking variables."""

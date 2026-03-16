@@ -13,10 +13,6 @@ from strategy_train_env.bidding_train_env.baseline.ppo.ppo import np2torch, Gaus
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Two-Agent PPO Trainer
-# ---------------------------------------------------------------------------
-
 class TwoAgentPPO:
     """
     Two-agent PPO trainer with independent policies.
@@ -36,7 +32,7 @@ class TwoAgentPPO:
         num_batches: int = 100,
         update_freq: int = 4,
         max_ep_len: int = 48,
-        cpa_penalty_coef: float = 0.01,
+        cpa_penalty_coef: float = 0.0,
         save_path: str = "strategy_train_env/saved_model/two_agent_ppo",
         exploration_decay: float = 0.995,
     ):
@@ -114,7 +110,6 @@ class TwoAgentPPO:
                     actions.append(action[0, 0])  # Scalar
                     log_probs.append(log_prob[0])
                 
-                # Step environment
                 next_states, rewards, dones, infos = self.env.step(actions)
                 
                 # Shape rewards for each agent
@@ -181,7 +176,7 @@ class TwoAgentPPO:
 
     def update_policy(self, agent_idx: int, observations: np.ndarray, actions: np.ndarray, 
                      advantages: np.ndarray, old_logprobs: np.ndarray):
-        """Update a specific agent's policy using PPO clipped objective."""
+        """Update an agent's policy using PPO clipped objective."""
         observations = np2torch(observations)
         actions = np2torch(actions).unsqueeze(-1)
         advantages = np2torch(advantages)
@@ -197,7 +192,6 @@ class TwoAgentPPO:
         surr2 = torch.clamp(ratio, 1 - self.eps_clip, 1 + self.eps_clip) * advantages
         loss = -torch.min(surr1, surr2).mean()
         
-        # Update
         self.optimizers[agent_idx].zero_grad()
         loss.backward()
         self.optimizers[agent_idx].step()
@@ -314,7 +308,8 @@ class TwoAgentPPO:
         return all_rewards_per_agent, all_costs_per_agent, all_alphas_per_agent
 
     def _shape_reward(self, conversions: float, cost: float, cpa_target: float) -> float:
-        """Reward shaping with CPA penalty."""
+        """Reward shaping with CPA penalty. NOTE: This is essentially unused in the two-agent
+        PPO training because we set cpa_penalty_coefficient to be 0."""
         if conversions > 0:
             actual_cpa = cost / conversions
             violation = max(0.0, actual_cpa - cpa_target)
@@ -335,10 +330,6 @@ class TwoAgentPPO:
                 os.path.join(self.save_path, f"agent{agent_idx}_baseline_{tag}.pt")
             )
 
-
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     env = TwoAgentPpoBiddingEnv()
