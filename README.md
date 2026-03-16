@@ -79,7 +79,7 @@ python -m strategy_train_env.bidding_train_env.baseline.ppo.ppo
 python -m strategy_train_env.bidding_train_env.baseline.ppo.two_agent_ppo
 ```
 
-### Online Evaluation
+### Online Evaluation for single agent
 
 Use the PpoBiddingStrategy as the PlayerBiddingStrategy for evaluation.
 ```
@@ -95,4 +95,9 @@ config/test.gin
 Run online evaluation.
 ```bash
 $ python main_test.py
+```
+
+### Online Evaluation for dual-agent PPO
+```bash
+$ python run_test_two_ppo.py
 ```
