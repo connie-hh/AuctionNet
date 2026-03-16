@@ -166,7 +166,14 @@ class NeurIPSPvGen:
 
     def reset(self, episode: int = 0):
         """Resets the generator with a new episode."""
-        self.__init__(episode=episode)
+        self.__init__(
+            episode=episode,
+            num_tick=self.NUM_TICK,
+            num_agent=self.NUM_AGENT,
+            num_agent_category=self.NUM_AGENT_CATEGORY,
+            num_category=self.NUM_CATEGORY,
+            pv_num=self.PV_NUM,
+        )
 
     def load_traffic_num_ratio_base(self) -> np.ndarray:
         """Loads the base traffic number ratio."""
