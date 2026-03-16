@@ -1,6 +1,7 @@
 # Adapting PPO for On-Policy Budget-Constrained Auto-bidding Advertisers
+Connie Hong (@connie-hh), Linda Liu (@lindaliu0718)
 
-## 🏛︎ Project Structure (inherited from original AuctionNet codebase)
+## 🏛︎ Project Structure (mostly inherited from original AuctionNet codebase)
 
 ---
 
@@ -94,59 +95,4 @@ config/test.gin
 Run online evaluation.
 ```bash
 $ python main_test.py
-```
-
-## 📖 User Case
-### Train your own bidding strategy 'awesome_xx'
-Refer to the baseline algorithm implementation and complete the following files.
-```
-├── strategy_train_env
-│   ├── bidding_train_env
-│   │   ├── baseline
-│   │   │   └── awesome_xx
-│   │   │       └──awesome_xx.py                # Implement model-related components.
-│   │   ├── train_data_generator
-│   │   │   └── train_data_generator.py         # Custom-built training Data generation Pipeline.
-│   │   └── strategy
-│   │       └── awesome_xx_bidding_strategy.py  # Implement Unified bidding strategy interface.
-│   ├── main
-│   │   └── main_awesome_xx.py                  # Main scripts for executing training processes.
-│   └── run
-│       └── run_awesome_xx.py                   # Core logic for executing training processes.
-
-```
-### Evaluate your own bidding strategy 'awesome_xx'
-Use the awesome_xxBiddingStrategy as the PlayerBiddingStrategy for evaluation.
-```
-bidding_train_env/strategy/__init__.py
-from .awesome_xx_bidding_strategy import awesome_xxBiddingStrategy as PlayerBiddingStrategy
-```
-Run the evaluation process.
-```
-# Return to the root directory
-$ python main_test.py
-```
-
-
-### Generate new dataset
-Set the hyperparameters and run the evaluation process.
-```
-config/test.gin
-GENERATE_LOG = True
-
-python main_test.py
-```
-The newly generated data will be stored in the /data folder.
-
-
-### Customize new auction environment
-We adhere to the programming principles of high cohesion and low coupling to encapsulate each module, making it convenient for users to modify various modules in the auction environment according to their needs.
-```
-├── simul_bidding_env             # Ad Auction Environment
-
-│   ├── Environment               # The auction module.
-│   ├── PvGenerator               # The ad opportunity generation module.
-│   ├── Tracker                   
-│   │   ├── PlayerAnalysis.py     # Implements metrics to evaluate the performance.
-│   └── strategy                  # The bidding module (competitors’ strategies).
 ```
