@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 
 class PPOAgent:
-    """Wrapper for PPO policy to match the agent interface."""
+    """Wrapper for PPO policy to match the Agent interface."""
     
     def __init__(self, policy_path: str, budget: float, cpa: float, category: int, 
                  name: str, state_dim: int = 16, hidden_dim: int = 128):
@@ -57,6 +57,7 @@ class PPOAgent:
         
         self.policy.eval()
         
+        # State tracking (matching PpoBiddingEnv structure)
         self.tick_index = 0
         self._reset_state_tracking()
     
@@ -113,10 +114,13 @@ class PPOAgent:
             mu, std = self.policy(state_tensor)
             alpha = mu.item()  # Deterministic for evaluation
         
-        alpha = np.clip(alpha, 1.0, self.cpa * 1.5)
+        # Cap alpha at reasonable bounds
+        alpha = np.clip(alpha, 1.0, self.cpa * 2.0)
         
+        # Compute bids
         bids = alpha * pValues
         
+        # Update state tracking for next timestep
         self._update_state_tracking(
             timeStepIndex, pValues, bids, historyAuctionResult,
             historyImpressionResult, historyLeastWinningCost
@@ -467,6 +471,30 @@ def run_two_agent_ppo_test(
             os.makedirs("data/log", exist_ok=True)
             train_data_tracker.generate_train_data(f"data/log/two_agent_ep{episode}.csv")
         
+        # Compute average alpha for each agent across the episode
+        avg_alphas = []
+        for i in range(num_real_agents):
+            # Get all bids and pvalues for this agent across all ticks
+            agent_bids_per_tick = []
+            agent_pvalues_per_tick = []
+            
+            for tick_bids, tick_pv_info in zip(history_bids, history_pvalue_infos):
+                # tick_bids shape: (num_agent, num_pv)
+                # tick_pv_info shape: (num_agent, num_pv, 2) where [:,:,0] is pvalues
+                agent_tick_bids = tick_bids[i]
+                agent_tick_pvalues = tick_pv_info[i, :, 0]
+                
+                # Only include non-zero pvalues to compute alpha
+                mask = agent_tick_pvalues > 0
+                if mask.any():
+                    # alpha = bid / pvalue (element-wise)
+                    tick_alphas = agent_tick_bids[mask] / agent_tick_pvalues[mask]
+                    agent_bids_per_tick.extend(tick_alphas.tolist())
+            
+            # Average alpha across all opportunities in the episode
+            avg_alpha = np.mean(agent_bids_per_tick) if agent_bids_per_tick else 0.0
+            avg_alphas.append(avg_alpha)
+        
         # Store episode results (only for real agents)
         episode_result = {
             'episode': episode,
@@ -476,12 +504,13 @@ def run_two_agent_ppo_test(
             'budget_used': [budgets[i] - agents[i].remaining_budget for i in range(num_real_agents)],
             'budget_utilization': [(budgets[i] - agents[i].remaining_budget) / budgets[i] 
                                   for i in range(num_real_agents)],
+            'avg_alphas': avg_alphas,  # Add alpha tracking
         }
         all_episode_results.append(episode_result)
         
         # Log episode summary
-        logger.info(f"  Agent 0: Conv={rewards[0]:.1f}, Cost=${costs[0]:.2f}, CPA=${episode_result['cpa'][0]:.2f}")
-        logger.info(f"  Agent 1: Conv={rewards[1]:.1f}, Cost=${costs[1]:.2f}, CPA=${episode_result['cpa'][1]:.2f}")
+        logger.info(f"  Agent 0: Conv={rewards[0]:.1f}, Cost=${costs[0]:.2f}, CPA=${episode_result['cpa'][0]:.2f}, Alpha={avg_alphas[0]:.2f}")
+        logger.info(f"  Agent 1: Conv={rewards[1]:.1f}, Cost=${costs[1]:.2f}, CPA=${episode_result['cpa'][1]:.2f}, Alpha={avg_alphas[1]:.2f}")
     
     end_time = time.time()
     logger.info(f"\nTotal time elapsed: {end_time - begin_time:.2f} seconds")
@@ -508,12 +537,25 @@ def run_two_agent_ppo_test(
         rewards_list = [ep['rewards'][i] for ep in all_episode_results]
         costs_list = [ep['costs'][i] for ep in all_episode_results]
         cpa_list = [ep['cpa'][i] for ep in all_episode_results]
+        alpha_list = [ep['avg_alphas'][i] for ep in all_episode_results]
         
         logger.info(f"\nAgent {i} ({agents[i].name}):")
         logger.info(f"  Avg Conversions: {np.mean(rewards_list):.2f} ± {np.std(rewards_list):.2f}")
         logger.info(f"  Avg Cost:        ${np.mean(costs_list):.2f} ± ${np.std(costs_list):.2f}")
         logger.info(f"  Avg CPA:         ${np.mean(cpa_list):.2f} ± ${np.std(cpa_list):.2f}")
+        logger.info(f"  Avg Alpha:       {np.mean(alpha_list):.2f} ± {np.std(alpha_list):.2f}")
         logger.info(f"  Win Rate:        {np.mean([1 if ep['rewards'][i] > ep['rewards'][1-i] else 0 for ep in all_episode_results])*100:.1f}%")
+    
+    # Save alpha data to files
+    os.makedirs("test_results", exist_ok=True)
+    for i in range(num_real_agents):
+        alpha_array = np.array([ep['avg_alphas'][i] for ep in all_episode_results])
+        np.save(f"test_results/agent{i}_test_alphas.npy", alpha_array)
+        logger.info(f"\nSaved Agent {i} alphas to test_results/agent{i}_test_alphas.npy")
+    
+    # Save all episode results
+    np.save("test_results/all_episode_results.npy", all_episode_results)
+    logger.info(f"Saved all episode results to test_results/all_episode_results.npy")
     
     return results
 
