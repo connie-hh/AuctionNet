@@ -69,11 +69,28 @@ $ pip install -r requirements.txt
 python -m strategy_train_env.bidding_train_env.baseline.ppo.ppo
 ```
 
-#### Train PPO against a subset of agents
-```
-# python -m strategy_train_env.bidding_train_env.baseline.ppo.ppo_subset
+### Train PPO Against a Subset of Agents
+
+**Execution Command:**
+```bash
+python -m strategy_train_env.bidding_train_env.baseline.ppo.ppo_subset
 ```
 
+---
+
+#### How to Modify the Agent Subset
+To change which agents the model trains against, follow these steps:
+
+1.  **Locate the File:** `train_ppo.ppo_bidding_env_subset.py`
+2.  **Edit Lines 81–82:** Update the `isinstance` check to include your desired strategy classes.
+
+**Example Configuration:**
+```python
+# Identify agents by their specific class type
+if isinstance(agent, IqlBiddingStrategy) or isinstance(agent, OnlineLpBiddingStrategy):
+```
+
+(i.e. change the isintance (agent, Srteargy)) to your liking. 
 #### Train PPO against another PPO agent
 ```
 python -m strategy_train_env.bidding_train_env.baseline.ppo.two_agent_ppo
