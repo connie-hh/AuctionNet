@@ -71,7 +71,7 @@ python -m strategy_train_env.bidding_train_env.baseline.ppo.ppo
 
 #### Train PPO against a subset of agents
 ```
-# TODO
+# python -m strategy_train_env.bidding_train_env.baseline.ppo.ppo_subset
 ```
 
 #### Train PPO against another PPO agent
