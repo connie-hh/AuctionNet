@@ -90,7 +90,7 @@ To change which agents the model trains against, follow these steps:
 if isinstance(agent, IqlBiddingStrategy) or isinstance(agent, OnlineLpBiddingStrategy):
 ```
 
-(i.e. change the isintance (agent, Srteargy)) to your liking. 
+(i.e. change the isinstance (agent, Strategy)) to your liking. 
 #### Train PPO against another PPO agent
 ```
 python -m strategy_train_env.bidding_train_env.baseline.ppo.two_agent_ppo
